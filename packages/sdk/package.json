@@ -11,16 +11,24 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
-    "typescript": "^5.7.0"
+    "@types/node": "^26.4.1",
+    "typescript": "^5.7.0",
+    "vitest": "^5.0.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "@noble/ed25519": "^3.2.0"
   }
 }
