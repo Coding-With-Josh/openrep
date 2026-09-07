@@ -1,10 +1,10 @@
 {
   "name": "@openrep/cli",
   "version": "0.1.0",
-  "description": "First-class CLI for OpenRep — pipeline-friendly agent reputation management",
+  "description": "First-class CLI for OpenRep, the pipeline-friendly agent reputation management layer",
   "type": "module",
   "bin": {
-    "openrep": "./dist/index.js"
+    "openrep": "./dist/bin.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,17 +18,20 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && vitest run"
   },
   "dependencies": {
     "@openrep/sdk": "workspace:*",
+    "@noble/ed25519": "^3.2.0",
     "commander": "^13.1.0"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
-    "@types/node": "^22.0.0"
+    "@types/node": "^22.0.0",
+    "vitest": "^5.0.0"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=22.13.0"
   }
 }

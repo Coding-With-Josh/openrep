@@ -154,9 +154,27 @@ export async function runAgentLoop(
 
       // feed the tool result back. the assistant turn records what was
       // requested, the user turn carries the result in a labeled form so the
-      // model sees the outcome.
-      messages.push({ role: "assistant", content: `call ${response.name}` });
-      messages.push({ role: "user", content: serializeToolOutput(output), name: response.name });
+      // model sees the outcome. the structured toolCall fields carry the raw
+      // functionCall id/thoughtSignature through, so providers that require
+      // those to be echoed (gemini 3) get a valid multi-turn history;
+      // providers without that requirement ignore the extra fields.
+      messages.push({
+        role: "assistant",
+        content: `call ${response.name}`,
+        toolCall: {
+          name: response.name,
+          arguments: response.arguments,
+          ...(response.id !== undefined && { id: response.id }),
+          ...(response.thoughtSignature !== undefined && { thoughtSignature: response.thoughtSignature }),
+        },
+      });
+      messages.push({
+        role: "user",
+        content: serializeToolOutput(output),
+        name: response.name,
+        ...(response.id !== undefined && { toolCallId: response.id }),
+        ...(response.thoughtSignature !== undefined && { thoughtSignature: response.thoughtSignature }),
+      });
     }
 
     return failure(

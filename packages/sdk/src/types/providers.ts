@@ -1,9 +1,9 @@
 import type { Attestation } from "./attestation";
 import type { AgentId } from "./identity";
 
-// which model provider an agent runs on. extendable later. the only place
-// wrapAgent() ever branches on provider is selecting an adapter from this.
-export type ModelProvider = "anthropic" | "openai";
+// which model provider an agent runs on. the only place wrapAgent() ever
+// branches on provider is selecting an adapter from this.
+export type ModelProvider = "anthropic" | "openai" | "gemini" | "openai-compatible";
 
 // one tool an agent can call. provider agnostic, mapped to each provider's
 // actual format inside the adapter, that mapping logic is not typed here.
@@ -19,22 +19,43 @@ export interface ToolDefinition {
 export interface AgentConfig {
   provider: ModelProvider;
   model: string; // provider specific model id
+  // required and validated only for provider === "openai-compatible": the
+  // base url of a chat-completions-compatible endpoint. ignored everywhere
+  // else. never a guessed default: callers must name their endpoint.
+  baseUrl?: string;
   tools: ToolDefinition[];
+}
+
+// the raw functionCall fields a provider may attach to a tool call. carried
+// through the loop unchanged so a multi-turn history stays valid on
+// providers that require the original call id and/or a signature (gemini 3's
+// thoughtSignature) to be echoed back with the tool result. providers that
+// do not use these fields simply leave them unset.
+export interface ProviderToolCallFields {
+  name: string;
+  arguments: unknown;
+  id?: string;
+  thoughtSignature?: string;
 }
 
 // a single message in the normalized conversation the loop feeds the
 // adapter. role is a closed union, the payload is provider agnostic.
+// the optional structured fields on assistant messages and tool results
+// are additive: providers that do not model them (anthropic, openai)
+// ignore them and keep producing their historical wire format.
 export type ProviderMessage =
   | { role: "user"; content: string }
-  | { role: "assistant"; content: string }
-  | { role: "user"; content: string; name: string }; // a fed-back tool result
+  | { role: "assistant"; content: string; toolCall?: ProviderToolCallFields }
+  | { role: "user"; content: string; name: string; toolCallId?: string; thoughtSignature?: string }; // a fed-back tool result
 
 // the normalized outcome the ProviderClient hands back to the run loop,
 // independent of which provider is behind it. the loop never sees a raw
 // provider payload, so no provider-specific parsing exists outside adapters.
+// tool_call may carry id/thoughtSignature passthrough so the loop can echo
+// them back on multi-turn histories that require it.
 export type ProviderResponse =
   | { kind: "text"; text: string }
-  | { kind: "tool_call"; name: string; arguments: unknown };
+  | { kind: "tool_call"; name: string; arguments: unknown; id?: string; thoughtSignature?: string };
 
 // the adapter-facing contract. one concrete implementation per provider.
 // each adapter is responsible ONLY for translating ToolDefinition[] into

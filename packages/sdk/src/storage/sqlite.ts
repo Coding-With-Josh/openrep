@@ -36,7 +36,7 @@
 // failure is never miscategorized as a name conflict. read paths never throw
 // for not-found, they return null.
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
-import type { ToolCall } from "../types/attestation.js";
+import type { ToolCall, ExternalVerification } from "../types/attestation.js";
 import type { AgentPermission } from "../types/identity.js";
 import type { AgentId } from "../types/identity.js";
 import type { AgentRecord, AttestationRecord, Paginated, PaginationParams, StorageAdapter } from "../types/storage.js";
@@ -77,6 +77,7 @@ CREATE TABLE IF NOT EXISTS attestations (
   signed_by TEXT NOT NULL,
   timestamp TEXT NOT NULL,
   schema_version INTEGER NOT NULL,
+  external_verification TEXT,
   FOREIGN KEY (agent_id) REFERENCES agents(public_key)
 );
 
@@ -126,6 +127,19 @@ function ensureRevocationSchema(db: DatabaseSync): void {
   }
   if (!columns.some((column) => column.name === "revoked_at")) {
     db.exec("ALTER TABLE agents ADD COLUMN revoked_at TEXT");
+  }
+}
+
+// external verification provenance: the external_verification column on
+// attestations, carrying ingest()'s optional check metadata as json. fresh
+// databases get the column from the CREATE TABLE above; pre-existing files
+// (created before this pass) get it through the same guarded ALTER pattern.
+// the column is nullable by design: native attestations and legacy rows have
+// no external check, and null is "no check ran", never "check failed".
+function ensureExternalVerificationSchema(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(attestations)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "external_verification")) {
+    db.exec("ALTER TABLE attestations ADD COLUMN external_verification TEXT");
   }
 }
 
@@ -239,6 +253,35 @@ function parseToolsUsed(row: SqlRow): ToolCall[] {
   return parsed as ToolCall[];
 }
 
+// the external_verification column is either sql NULL ("no external check
+// ran") or a json object with exactly the ExternalVerification shape. a
+// corrupt or unexpected value fails loudly instead of shipping a mangled
+// provenance record upstream, matching the parseToolsUsed discipline.
+function parseExternalVerification(row: SqlRow): ExternalVerification | null {
+  const raw = nullableStr(row, "externalVerification");
+  if (raw === null) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new Error(`stored row has unreadable json in external_verification: ${(err as Error).message}`);
+  }
+  if (parsed === null || typeof parsed !== "object") {
+    throw new Error("stored row column external_verification is not a json object");
+  }
+  const value = parsed as { checked?: unknown; valid?: unknown; reason?: unknown };
+  if (typeof value.checked !== "boolean") {
+    throw new Error("stored row column external_verification has a malformed checked field");
+  }
+  if (value.valid !== null && typeof value.valid !== "boolean") {
+    throw new Error("stored row column external_verification has a malformed valid field");
+  }
+  if (value.reason !== null && typeof value.reason !== "string") {
+    throw new Error("stored row column external_verification has a malformed reason field");
+  }
+  return { checked: value.checked, valid: value.valid, reason: value.reason };
+}
+
 function normalizeLimit(limit: number | undefined): number {
   // strict validation before any sql runs. a caller passing NaN, decimals,
   // or negatives is a bug that must not silently become a different query.
@@ -292,7 +335,8 @@ const ATTESTATION_COLUMNS = `
   signature,
   signed_by AS signedBy,
   timestamp,
-  schema_version AS schemaVersion
+  schema_version AS schemaVersion,
+  external_verification AS externalVerification
 `;
 
 class SqliteStorageAdapter implements StorageAdapter {
@@ -403,8 +447,8 @@ class SqliteStorageAdapter implements StorageAdapter {
       this.db
         .prepare(
           `INSERT INTO attestations
-             (id, agent_id, idempotency_key, task, output, tools_used, source, content_hash, signature, signed_by, timestamp, schema_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             (id, agent_id, idempotency_key, task, output, tools_used, source, content_hash, signature, signed_by, timestamp, schema_version, external_verification)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.id,
@@ -419,6 +463,11 @@ class SqliteStorageAdapter implements StorageAdapter {
           record.signedBy,
           record.timestamp,
           record.schemaVersion,
+          // nullable json: absent (native) and null both persist as null,
+          // "no external check ran", and are read back as null.
+          record.externalVerification === undefined || record.externalVerification === null
+            ? null
+            : JSON.stringify(record.externalVerification),
         );
     } catch (err) {
       // the foreign key constraint is the schema level guarantee that an
@@ -511,6 +560,8 @@ function attestationFromRow(row: SqlRow): AttestationRecord {
     signedBy: str(row, "signedBy"),
     timestamp: str(row, "timestamp"),
     schemaVersion: num(row, "schemaVersion"),
+    // null means "no external check ran" (native or legacy rows).
+    externalVerification: parseExternalVerification(row),
   };
 }
 
@@ -530,6 +581,7 @@ export function createSqliteStorage(databasePath: string): StorageAdapter {
     db.exec(ATTESTATIONS_BY_AGENT_INDEX);
     ensureIdempotencySchema(db);
     ensureRevocationSchema(db);
+    ensureExternalVerificationSchema(db);
   } catch (err) {
     // fail loudly at construction: a database that cannot open or bootstrap
     // surfaces immediately, never lazily on the first call. the adapter

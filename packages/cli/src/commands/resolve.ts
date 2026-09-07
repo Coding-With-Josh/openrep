@@ -1,10 +1,23 @@
 import { Command } from "commander";
+import { resolve } from "@openrep/sdk";
 
-export const resolveCommand = new Command("resolve")
-  .description("Look up an agent by name, returning manifest + score")
-  .argument("<name>", "Agent name")
-  .action(async (name: string) => {
-    // TODO: call SDK resolve()
-    console.log("Not implemented yet");
-    console.log("Agent:", name);
-  });
+import type { CliContext } from "../context.js";
+import { failSdkError, failSdkCode } from "./helpers.js";
+import { printManifestBlock, printScoreBlock } from "../print.js";
+
+export function resolveCommand(ctx: CliContext): Command {
+  return new Command("resolve")
+    .description("resolve an agent by name: signed manifest plus live score")
+    .argument("<name>", "agent name (name lookup per the sdk contract)")
+    .action(async (name: string) => {
+      const result = await resolve(name, ctx.storage);
+      if (!result.ok) {
+        failSdkError(result.error);
+        return;
+      }
+      const { manifest, score } = result.value;
+      printManifestBlock(manifest);
+      console.log("");
+      printScoreBlock(manifest.publicKey, manifest.name, score);
+    });
+}

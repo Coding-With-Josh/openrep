@@ -23,3 +23,16 @@ export const openAiConfigFixture: AgentConfig = {
   provider: "openai",
   model: "gpt-4o-mini",
 };
+
+export const geminiConfigFixture: AgentConfig = {
+  ...sampleConfigFixture,
+  provider: "gemini",
+  model: "gemini-3.8-flash",
+};
+
+export const openAiCompatibleConfigFixture: AgentConfig = {
+  ...sampleConfigFixture,
+  provider: "openai-compatible",
+  model: "gpt-4o-mini",
+  baseUrl: "https://compat.example/v1",
+};

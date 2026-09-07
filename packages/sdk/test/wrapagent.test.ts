@@ -416,3 +416,75 @@ describe("runAgentLoop direct with a scripted fake provider", () => {
     expect(result.error.code).toBe("RUN_TIMED_OUT");
   });
 });
+
+describe("gemini multi-turn tool loop through the real adapter", () => {
+  it("carries the functionCall id/thoughtSignature through a full 2-turn loop", async () => {
+    const { storage, agent } = await realSetup();
+    // call 1: gemini-shaped functionCall with id + thoughtSignature;
+    // call 2: gemini-shaped text. the loop must execute the tool and feed
+    // the result back as a paired functionResponse on turn 2.
+    const responses = [
+      {
+        candidates: [
+          {
+            content: {
+              parts: [{ functionCall: { name: "add", args: { a: 2, b: 3 }, id: "call_gc_1", thoughtSignature: "sig_1" } }],
+            },
+          },
+        ],
+      },
+      { candidates: [{ content: { parts: [{ text: "the sum is 5" }] } }] },
+    ];
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return responses.shift() ?? { candidates: [{ content: { parts: [{ text: "done" }] } }] };
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const impl = {
+      add: async () => ({ sum: 5 }),
+    };
+
+    const result = await wrapAgent({
+      agentId: agent.publicKey,
+      signingKey: agent.privateKey,
+      storage,
+      config: { ...sampleConfig, provider: "gemini", model: "gemini-3.8-flash" },
+      tools: impl,
+      apiKey: "sk-gemini-secret-key",
+      task: "add 2 and 3",
+    });
+    vi.unstubAllGlobals();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.value.output).toBe("the sum is 5");
+    expect(result.value.turns).toBe(2);
+    expect(result.value.toolsUsed).toHaveLength(1);
+
+    // the second provider call must carry the api-valid multi-turn history:
+    // a model turn with the exact functionCall the model produced (id +
+    // thoughtSignature included) followed by a user turn with the paired
+    // functionResponse echoing the same id and signature. this is what makes
+    // gemini 3 accept the feedback round and keep the conversation going.
+    const secondBody = JSON.parse((fetchMock.mock.calls[1][1] as { body: string }).body);
+    expect(secondBody.contents).toEqual([
+      { role: "user", parts: [{ text: "add 2 and 3" }] },
+      {
+        role: "model",
+        parts: [{ functionCall: { name: "add", args: { a: 2, b: 3 }, id: "call_gc_1", thoughtSignature: "sig_1" } }],
+      },
+      {
+        role: "user",
+        parts: [
+          { functionResponse: { name: "add", response: { output: '{"sum":5}' }, id: "call_gc_1", thoughtSignature: "sig_1" } },
+        ],
+      },
+    ]);
+    // the live key never appears in any request body, second turn included
+    expect(JSON.stringify(secondBody)).not.toContain("sk-gemini-secret-key");
+  });
+});

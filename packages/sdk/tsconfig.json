@@ -2,7 +2,13 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "outDir": "./dist",
-    "rootDir": "./src"
+    "rootDir": "./src",
+    // the sdk runs on node (engines >= 22.13, uses node:sqlite). pinning
+    // types to "node" makes the node global environment explicit so the
+    // editor and tsc agree on the same declarations (TextEncoder,
+    // AbortController, fetch, ...) instead of relying on implicit @types
+    // auto-include. keep DOM and other browser libs out of this program.
+    "types": ["node"]
   },
   "include": ["src"]
 }

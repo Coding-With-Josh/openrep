@@ -7,6 +7,19 @@ export interface ToolCall {
   output?: unknown; // tool result when captured
 }
 
+// provenance record for an external integrity check that ran before
+// ingest() signed a record. metadata only, never part of the signed bytes:
+// canonicalize() stays exactly { task, output, toolsUsed }, so no
+// externalVerification value can influence the content hash or signature.
+// it also never authorizes a persist by itself: the ingest() path decides
+// what to do with the verdict (fail closed on invalid) at ingest time, and
+// verification ignores it entirely.
+export interface ExternalVerification {
+  checked: boolean; // whether an external integrity check ran at all
+  valid: boolean | null; // its verdict when it ran, null when it did not
+  reason: string | null; // why the check failed, null on success or when skipped
+}
+
 // a signed record that an agent completed a specific piece of work.
 // contentHash is what actually gets signed, so any change to task, output,
 // or toolsUsed invalidates the signature.
@@ -22,12 +35,16 @@ export interface Attestation {
   signedBy: string; // the public key that produced the signature
   timestamp: string; // iso 8601 utc
   schemaVersion: number; // so the schema can evolve without breaking old rows
+  // optional provenance metadata about an external check that ran before
+  // ingest() signed this record. absent on native attestations; present
+  // (possibly null) on ingested ones. never part of the signed bytes.
+  externalVerification?: ExternalVerification | null;
 }
 
 // raw input from an external platform before normalization. intentionally
-// loose, this is sample/mock external platform data for demo purposes, the
-// one legitimate mock in this entire project. sourceName is always present,
-// the rest depends on the platform.
+// loose because it is raw input: sourceName is always present, the rest
+// depends on the platform. a SourceAdapter's normalize() turns this into a
+// NormalizedExternalAttestation; there are no sample external data files.
 export interface ExternalAttestation {
   sourceName: string;
   [key: string]: unknown;
@@ -48,6 +65,12 @@ export interface AttestationInput {
 export interface WrapAgentOptions {
   source?: string; // defaults to "native"
   idempotencyKey?: string; // lets retries collapse into one attestation
+}
+
+// options for a single ingest() call, mirrored from attest(): the same
+// idempotencyKey on a retried submission maps to the same attestation.
+export interface IngestOptions {
+  idempotencyKey?: string; // same key on retry maps to the same attestation
 }
 
 // result of a wrapped run: the output, the tool calls captured during the

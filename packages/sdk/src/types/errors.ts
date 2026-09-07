@@ -31,7 +31,21 @@ export type OpenRepErrorCode =
   | "INPUT_TOO_LARGE"
   | "UNKNOWN_SOURCE"
   | "MALFORMED_EXTERNAL_ATTESTATION"
+  // ingest() ran the source adapter's optional validate() (or attempted to)
+  // and the verdict was invalid, malformed, or the check threw. fail closed:
+  // a throwing or garbled check is never treated as an unverified pass, and
+  // nothing is persisted on this path.
+  | "EXTERNAL_ATTESTATION_INVALID"
   | "MISSING_MASTER_KEY"
+  // environment configuration failures from loadEnvConfig(). distinct codes
+  // so a missing variable is never conflated with a malformed one, and a
+  // stray secret (a token with no url) fails closed instead of silently
+  // falling back to local mode and ignoring the token. messages always name
+  // the variable involved and never echo its value.
+  | "MISSING_TURSO_AUTH_TOKEN"
+  | "MISSING_TURSO_DATABASE_URL"
+  | "MISSING_DATABASE_PATH"
+  | "INVALID_ENV"
   | "KEY_DECRYPTION_FAILED"
   | "SESSION_EXPIRED"
   | "RATE_LIMITED"

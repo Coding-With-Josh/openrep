@@ -1,31 +1,25 @@
-// parsed argument shapes for cli commands, before conversion into sdk input
-// types. kept separate from ExternalAttestation so file parsing failures
-// are distinguishable from sdk validation failures.
+// cli-level command arg shapes. args arrive as raw, untrusted argv strings;
+// each command parses and validates them before anything reaches the sdk.
 
-export interface CreateCommandArgs {
-  name?: string; // optional explicit name, auto generated when absent
+export interface CreateCommandOptions {
+  revealKeys?: boolean; // --reveal-keys, opt-in private key printing
 }
 
 export interface AttestCommandArgs {
-  agent: string; // agent id or name
-  task: string;
-  output: string;
-  source: string;
+  agent: string; // -a/--agent
+  task: string; // -t/--task
+  output: string; // -o/--output
+  tools?: string; // --tools, raw json, parsed by the command
+  idempotencyKey?: string; // --idempotency-key
 }
 
 export interface IngestCommandArgs {
-  file: string; // path to the external attestation file
-  source: string; // source name to attribute
+  file: string; // -f/--file
+  source: string; // -s/--source
+  agent: string; // -a/--agent
 }
 
-export interface ScoreCommandArgs {
-  name: string;
-}
-
-export interface ResolveCommandArgs {
-  name: string;
-}
-
-export interface VerifyCommandArgs {
-  name: string;
+export interface RevokeCommandArgs {
+  agent: string; // -a/--agent
+  ownerKey?: string; // --owner-key, overrides custody resolution
 }
