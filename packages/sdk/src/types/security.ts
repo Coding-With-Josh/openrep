@@ -42,15 +42,65 @@ export interface KeyCustodyPolicy {
   rawKeyPersistence: "never";
 }
 
-// storage for session-scoped encrypted keys. the concrete implementation is
-// src/session-store.ts (sqlite-backed, expiry enforced); the interface stays
-// storage agnostic so it can be swapped for another backing store without
-// changing calling code.
+// storage for session-scoped encrypted keys. the reference implementation is
+// InMemorySessionKeyStore in src/session-store.ts (process scoped, expiry
+// enforced, no background timer); the durable, owner-scoped variant meant for
+// the web/server layer over a real store is DurableSessionKeyStore in
+// src/session-store-durable.ts backed by the SessionKeyBackend interface
+// below. the interface stays storage agnostic so either implementation can be
+// swapped without changing calling code. the agentId-keyed base interface has
+// no owner concept; web-layer deployments that must not let one browser
+// recover another browser's keys use the owned variant instead.
 export interface SessionKeyStore {
   get(agentId: AgentId): Promise<EncryptedKeyRecord | null>;
   set(agentId: AgentId, record: EncryptedKeyRecord): Promise<void>;
   delete(agentId: AgentId): Promise<void>;
   clearExpired(): Promise<void>; // session keys must have a real expiry, not live forever
+}
+
+// persisted row behind DurableSessionKeyStore. carries only the encrypted
+// envelope plus the ownership and expiry bookkeeping: a raw private key
+// cannot be represented in this shape, structurally, never by convention.
+export interface SessionKeyRow {
+  agentId: AgentId;
+  // the owning browser session id (minted by the web layer, never derived
+  // from the agent key). there is deliberately no foreign key to a users
+  // table: the ledger has no user concept, single user demo, and ownership
+  // is enforced by the (agent_id, owner_user_id) pair scoping below.
+  ownerUserId: string;
+  encryptedPrivateKey: string; // base64 ciphertext of the private key
+  iv: string; // base64 initialization vector, unique per encryption
+  algorithm: string; // explicit algorithm name, e.g. "aes-256-gcm"
+  createdAt: string; // iso 8601 utc
+  // epoch ms at which the session expires; DurableSessionKeyStore slides it
+  // forward on a live get so expiry survives process restarts, unlike the
+  // in-memory store whose window dies with the process.
+  expiresAtEpochMs: number;
+}
+
+// dumb persistence contract over the session_keys table. crypto and window
+// logic live in DurableSessionKeyStore, never here; the adapters implement
+// this alongside StorageAdapter so the web layer holds ONE storage handle
+// for both the reputation ledger and session key custody. every read is
+// scoped to the exact (agent_id, owner_user_id) pair, so no backend method
+// can enumerate another owner's rows (adversarial review: cross-owner
+// access).
+export interface SessionKeyBackend {
+  getSessionKey(agentId: AgentId, ownerUserId: string): Promise<SessionKeyRow | null>;
+  setSessionKey(row: SessionKeyRow): Promise<void>; // upsert: one row per pair
+  touchSessionKey(agentId: AgentId, ownerUserId: string, expiresAtEpochMs: number): Promise<void>; // idempotent slide
+  deleteSessionKey(agentId: AgentId, ownerUserId: string): Promise<void>;
+  sweepExpiredSessionKeys(beforeEpochMs: number): Promise<void>;
+}
+
+// owner-scoped session key contract for multi-browser deployments. every
+// operation names the owner explicitly; a wrong owner is a miss, never a
+// fallthrough to another owner's row.
+export interface OwnedSessionKeyStore {
+  get(agentId: AgentId, ownerUserId: string): Promise<EncryptedKeyRecord | null>;
+  set(agentId: AgentId, ownerUserId: string, record: EncryptedKeyRecord): Promise<void>;
+  delete(agentId: AgentId, ownerUserId: string): Promise<void>;
+  clearExpired(): Promise<void>;
 }
 
 // fixed window rate limit configuration. actual enforcement is a separate

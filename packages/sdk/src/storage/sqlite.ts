@@ -40,6 +40,7 @@ import type { ToolCall, ExternalVerification } from "../types/attestation.js";
 import type { AgentPermission } from "../types/identity.js";
 import type { AgentId } from "../types/identity.js";
 import type { KeyRotationRecord } from "../types/identity.js";
+import type { SessionKeyBackend, SessionKeyRow } from "../types/security.js";
 import type { AgentRecord, AttestationRecord, Paginated, PaginationParams, StorageAdapter } from "../types/storage.js";
 import type { RegisteredSource } from "../types/sources.js";
 
@@ -103,6 +104,29 @@ CREATE TABLE IF NOT EXISTS key_rotations (
   signature TEXT NOT NULL,
   FOREIGN KEY (old_public_key) REFERENCES agents(public_key),
   FOREIGN KEY (new_public_key) REFERENCES agents(public_key)
+);
+
+-- web session key custody: encrypted envelopes only (never raw keys, the
+-- SessionKeyRow type structurally cannot carry one), one row per
+-- (agent_id, owner_user_id) pair, expiry persisted so a serverless cold
+-- start cannot forget a live session. the agent foreign key keeps a session
+-- row from ever naming a nonexistent identity; owner_user_id deliberately
+-- has no foreign key because the ledger has no users table (single user
+-- demo, ownership is a web-minted session id, and pair-scoped reads are the
+-- enforcement, see the SessionKeyBackend contract in types/security.ts).
+-- new in this pass, so fresh and legacy databases both get it from this
+-- CREATE, no ALTER is needed.
+CREATE TABLE IF NOT EXISTS session_keys (
+  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  encrypted_private_key TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  algorithm TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at_epoch_ms INTEGER NOT NULL,
+  UNIQUE (agent_id, owner_user_id),
+  FOREIGN KEY (agent_id) REFERENCES agents(public_key)
 );
 `;
 
@@ -307,6 +331,21 @@ function parseExternalVerification(row: SqlRow): ExternalVerification | null {
   return { checked: value.checked, valid: value.valid, reason: value.reason };
 }
 
+// session key rows come back as plain records; the accessors fail loudly on
+// a corrupt or unexpected shape instead of shipping a mangled envelope, and
+// the numeric expiry handles both number and bigint representations.
+function sessionKeyFromRow(row: SqlRow): SessionKeyRow {
+  return {
+    agentId: str(row, "agentId"),
+    ownerUserId: str(row, "ownerUserId"),
+    encryptedPrivateKey: str(row, "encryptedPrivateKey"),
+    iv: str(row, "iv"),
+    algorithm: str(row, "algorithm"),
+    createdAt: str(row, "createdAt"),
+    expiresAtEpochMs: num(row, "expiresAtEpochMs"),
+  };
+}
+
 function normalizeLimit(limit: number | undefined): number {
   // strict validation before any sql runs. a caller passing NaN, decimals,
   // or negatives is a bug that must not silently become a different query.
@@ -364,7 +403,7 @@ const ATTESTATION_COLUMNS = `
   external_verification AS externalVerification
 `;
 
-class SqliteStorageAdapter implements StorageAdapter {
+class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
   constructor(private readonly db: DatabaseSync) {}
 
   async getAgent(agentId: AgentId): Promise<AgentRecord | null> {
@@ -498,6 +537,63 @@ class SqliteStorageAdapter implements StorageAdapter {
       timestamp: str(row, "timestamp"),
       signature: str(row, "signature"),
     }));
+  }
+
+  async getSessionKey(agentId: AgentId, ownerUserId: string): Promise<SessionKeyRow | null> {
+    // pair-scoped read: an owner can only ever see its own row for an
+    // agent, and a wrong owner is a miss, never a fallthrough
+    // (adversarial review: cross-owner access). not-found returns null.
+    const row = this.db
+      .prepare(
+        `SELECT agent_id AS agentId, owner_user_id AS ownerUserId, encrypted_private_key AS encryptedPrivateKey,
+                iv, algorithm, created_at AS createdAt, expires_at_epoch_ms AS expiresAtEpochMs
+         FROM session_keys WHERE agent_id = ? AND owner_user_id = ?`,
+      )
+      .get(agentId, ownerUserId);
+    return row ? sessionKeyFromRow(row) : null;
+  }
+
+  async setSessionKey(row: SessionKeyRow): Promise<void> {
+    // upsert: one row per (agent, owner) pair, replacing any previous
+    // envelope for the same pair. the agent foreign key refuses a session
+    // for a nonexistent identity at the schema level.
+    this.db
+      .prepare(
+        `INSERT INTO session_keys (agent_id, owner_user_id, encrypted_private_key, iv, algorithm, created_at, expires_at_epoch_ms)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (agent_id, owner_user_id) DO UPDATE SET
+           encrypted_private_key = excluded.encrypted_private_key,
+           iv = excluded.iv,
+           algorithm = excluded.algorithm,
+           created_at = excluded.created_at,
+           expires_at_epoch_ms = excluded.expires_at_epoch_ms`,
+      )
+      .run(
+        row.agentId,
+        row.ownerUserId,
+        row.encryptedPrivateKey,
+        row.iv,
+        row.algorithm,
+        row.createdAt,
+        row.expiresAtEpochMs,
+      );
+  }
+
+  async touchSessionKey(agentId: AgentId, ownerUserId: string, expiresAtEpochMs: number): Promise<void> {
+    // idempotent expiry slide. zero rows changed is fine: the store only
+    // touches after a successful read, so a row vanishing mid-flight just
+    // means the slide did not land.
+    this.db
+      .prepare("UPDATE session_keys SET expires_at_epoch_ms = ? WHERE agent_id = ? AND owner_user_id = ?")
+      .run(expiresAtEpochMs, agentId, ownerUserId);
+  }
+
+  async deleteSessionKey(agentId: AgentId, ownerUserId: string): Promise<void> {
+    this.db.prepare("DELETE FROM session_keys WHERE agent_id = ? AND owner_user_id = ?").run(agentId, ownerUserId);
+  }
+
+  async sweepExpiredSessionKeys(beforeEpochMs: number): Promise<void> {
+    this.db.prepare("DELETE FROM session_keys WHERE expires_at_epoch_ms <= ?").run(beforeEpochMs);
   }
 
   async getAttestations(agentId: AgentId, pagination: PaginationParams = {}): Promise<Paginated<AttestationRecord>> {
@@ -653,8 +749,11 @@ function attestationFromRow(row: SqlRow): AttestationRecord {
 
 // direct construction, always opens a fresh connection and a fresh file (or
 // a fresh in-memory database for ":memory:"). tests use this so every test
-// gets complete isolation.
-export function createSqliteStorage(databasePath: string): StorageAdapter {
+// gets complete isolation. the return type carries both contracts: the sdk
+// reputation ledger (StorageAdapter) and the session key custody backend
+// (SessionKeyBackend) that DurableSessionKeyStore consumes, so the web layer
+// holds one handle for both.
+export function createSqliteStorage(databasePath: string): StorageAdapter & SessionKeyBackend {
   let db: DatabaseSync;
   try {
     // enableForeignKeyConstraints is set explicitly even though node:sqlite
@@ -705,9 +804,9 @@ export function createSqliteStorage(databasePath: string): StorageAdapter {
 // memoized access point for application code: one open connection per path
 // per process, as advertised in the design. a new connection per call would
 // be a waste and could surface stale behavior on the same file.
-const openConnections = new Map<string, StorageAdapter>();
+const openConnections = new Map<string, StorageAdapter & SessionKeyBackend>();
 
-export function getSqliteStorage(databasePath: string): StorageAdapter {
+export function getSqliteStorage(databasePath: string): StorageAdapter & SessionKeyBackend {
   let adapter = openConnections.get(databasePath);
   if (adapter === undefined) {
     adapter = createSqliteStorage(databasePath);

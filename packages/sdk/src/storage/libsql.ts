@@ -63,6 +63,7 @@ import type { ToolCall, ExternalVerification } from "../types/attestation.js";
 import type { AgentPermission } from "../types/identity.js";
 import type { AgentId } from "../types/identity.js";
 import type { KeyRotationRecord } from "../types/identity.js";
+import type { SessionKeyBackend, SessionKeyRow } from "../types/security.js";
 import type { AgentRecord, AttestationRecord, Paginated, PaginationParams, StorageAdapter } from "../types/storage.js";
 import type { RegisteredSource } from "../types/sources.js";
 
@@ -134,6 +135,25 @@ const SCHEMA_STATEMENTS: readonly string[] = [
 );`,
   `CREATE INDEX IF NOT EXISTS idx_key_rotations_old ON key_rotations (old_public_key);`,
   `CREATE INDEX IF NOT EXISTS idx_key_rotations_new ON key_rotations (new_public_key);`,
+  // web session key custody, identical to sqlite.ts: encrypted envelopes
+  // only (SessionKeyRow structurally cannot carry a raw key), one row per
+  // (agent_id, owner_user_id) pair, persisted expiry so a serverless cold
+  // start cannot forget a live session. owner_user_id has no foreign key
+  // (no users table in the ledger; pair-scoped reads are the enforcement,
+  // see the SessionKeyBackend contract in types/security.ts). new in this
+  // pass, so fresh and legacy databases both get it from this CREATE.
+  `CREATE TABLE IF NOT EXISTS session_keys (
+  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  agent_id TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  encrypted_private_key TEXT NOT NULL,
+  iv TEXT NOT NULL,
+  algorithm TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at_epoch_ms INTEGER NOT NULL,
+  UNIQUE (agent_id, owner_user_id),
+  FOREIGN KEY (agent_id) REFERENCES agents(public_key)
+);`,
 ];
 
 // idempotency dedup, revocation columns, and external verification
@@ -385,6 +405,21 @@ function parseExternalVerification(row: SqlRow): ExternalVerification | null {
   return { checked: value.checked, valid: value.valid, reason: value.reason };
 }
 
+// session key rows come back as plain records; the accessors fail loudly on
+// a corrupt or unexpected shape instead of shipping a mangled envelope, and
+// the numeric expiry handles both number and bigint representations.
+function sessionKeyFromRow(row: SqlRow): SessionKeyRow {
+  return {
+    agentId: str(row, "agentId"),
+    ownerUserId: str(row, "ownerUserId"),
+    encryptedPrivateKey: str(row, "encryptedPrivateKey"),
+    iv: str(row, "iv"),
+    algorithm: str(row, "algorithm"),
+    createdAt: str(row, "createdAt"),
+    expiresAtEpochMs: num(row, "expiresAtEpochMs"),
+  };
+}
+
 function normalizeLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_PAGE_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
@@ -438,7 +473,7 @@ const ATTESTATION_COLUMNS = `
   external_verification AS externalVerification
 `;
 
-export class LibsqlStorageAdapter implements StorageAdapter {
+export class LibsqlStorageAdapter implements StorageAdapter, SessionKeyBackend {
   constructor(private readonly client: Client) {}
 
   // request scoped lifecycle: call at the end of the invocation that
@@ -557,6 +592,64 @@ export class LibsqlStorageAdapter implements StorageAdapter {
       timestamp: str(row, "timestamp"),
       signature: str(row, "signature"),
     }));
+  }
+
+  async getSessionKey(agentId: AgentId, ownerUserId: string): Promise<SessionKeyRow | null> {
+    // pair-scoped read: a wrong owner is a miss, never a fallthrough to
+    // another owner's row (adversarial review: cross-owner access).
+    const result = await this.client.execute({
+      sql: `SELECT agent_id AS agentId, owner_user_id AS ownerUserId, encrypted_private_key AS encryptedPrivateKey,
+                   iv, algorithm, created_at AS createdAt, expires_at_epoch_ms AS expiresAtEpochMs
+            FROM session_keys WHERE agent_id = ? AND owner_user_id = ?`,
+      args: [agentId, ownerUserId],
+    });
+    return result.rows.length > 0 ? sessionKeyFromRow(result.rows[0]) : null;
+  }
+
+  async setSessionKey(row: SessionKeyRow): Promise<void> {
+    // upsert: one row per (agent, owner) pair. the agent foreign key refuses
+    // a session row for a nonexistent identity at the schema level.
+    await this.client.execute({
+      sql: `INSERT INTO session_keys (agent_id, owner_user_id, encrypted_private_key, iv, algorithm, created_at, expires_at_epoch_ms)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (agent_id, owner_user_id) DO UPDATE SET
+              encrypted_private_key = excluded.encrypted_private_key,
+              iv = excluded.iv,
+              algorithm = excluded.algorithm,
+              created_at = excluded.created_at,
+              expires_at_epoch_ms = excluded.expires_at_epoch_ms`,
+      args: [
+        row.agentId,
+        row.ownerUserId,
+        row.encryptedPrivateKey,
+        row.iv,
+        row.algorithm,
+        row.createdAt,
+        row.expiresAtEpochMs,
+      ],
+    });
+  }
+
+  async touchSessionKey(agentId: AgentId, ownerUserId: string, expiresAtEpochMs: number): Promise<void> {
+    // idempotent expiry slide; zero rows changed is fine (see sqlite.ts).
+    await this.client.execute({
+      sql: "UPDATE session_keys SET expires_at_epoch_ms = ? WHERE agent_id = ? AND owner_user_id = ?",
+      args: [expiresAtEpochMs, agentId, ownerUserId],
+    });
+  }
+
+  async deleteSessionKey(agentId: AgentId, ownerUserId: string): Promise<void> {
+    await this.client.execute({
+      sql: "DELETE FROM session_keys WHERE agent_id = ? AND owner_user_id = ?",
+      args: [agentId, ownerUserId],
+    });
+  }
+
+  async sweepExpiredSessionKeys(beforeEpochMs: number): Promise<void> {
+    await this.client.execute({
+      sql: "DELETE FROM session_keys WHERE expires_at_epoch_ms <= ?",
+      args: [beforeEpochMs],
+    });
   }
 
   async getAttestations(agentId: AgentId, pagination: PaginationParams = {}): Promise<Paginated<AttestationRecord>> {

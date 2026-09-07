@@ -33,6 +33,7 @@ export { createLibsqlStorage, LibsqlStorageAdapter, type LibsqlStorageConfig } f
 export { createProviderClient } from "./providers/index.js";
 export { getMasterKey, encryptPrivateKey, decryptPrivateKey, MASTER_KEY_ENV_VAR, ENCRYPTED_KEY_ALGORITHM } from "./security.js";
 export { InMemorySessionKeyStore, DEFAULT_SESSION_WINDOW_MS } from "./session-store.js";
+export { DurableSessionKeyStore } from "./session-store-durable.js";
 export { AnthropicClient } from "./providers/anthropic.js";
 export { OpenAiClient, OpenAiCompatibleClient } from "./providers/openai.js";
 export { GeminiClient } from "./providers/gemini.js";
