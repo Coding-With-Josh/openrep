@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { resolve } from "../src/index.js";
 import { getScore } from "../src/score.js";
-import type { AgentId, AgentRecord, AttestationRecord, Paginated, PaginationParams, RegisteredSource, StorageAdapter } from "../src/index.js";
+import type { AgentId, AgentRecord, AttestationRecord, KeyRotationRecord, Paginated, PaginationParams, RegisteredSource, StorageAdapter } from "../src/index.js";
 import type { AgentScore } from "../src/index.js";
 
 // composition proof for resolve: getScore is mocked, so ANY attestation read
@@ -35,6 +35,14 @@ class FakeStorage implements StorageAdapter {
 
   async revokeAgent(_agentId: AgentId, _revokedAt: string): Promise<void> {
     throw new Error("resolve must not revoke");
+  }
+
+  async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
+    throw new Error("not on the resolve path");
+  }
+
+  async getKeyRotations(_agentId: AgentId): Promise<KeyRotationRecord[]> {
+    throw new Error("not on the resolve path");
   }
 
   async getAttestations(_agentId: AgentId, _pagination?: PaginationParams): Promise<Paginated<AttestationRecord>> {

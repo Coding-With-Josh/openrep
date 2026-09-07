@@ -60,6 +60,15 @@ export type OpenRepErrorCode =
   // the revocation request's timestamp falls outside the replay window, so
   // a captured old request can never be replayed later.
   | "STALE_REVOCATION_REQUEST"
+  // the rotation request did not prove possession of the agent's owner key.
+  // rotation authz mirrors revocation exactly, so a wrong signer (identity
+  // key holder, unrelated key holder, attacker) fails here and nothing is
+  // written.
+  | "UNAUTHORIZED_ROTATION"
+  // the rotation request's timestamp falls outside the same symmetric replay
+  // window revocation uses, so a captured rotation request can never be
+  // replayed later either.
+  | "STALE_ROTATION_REQUEST"
   // the agent the caller is trying to act on has been revoked. attest()
   // refuses to sign for it before doing any crypto work.
   | "AGENT_REVOKED"

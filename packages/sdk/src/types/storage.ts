@@ -1,4 +1,4 @@
-import type { AgentId, AgentManifest } from "./identity";
+import type { AgentId, AgentManifest, KeyRotationRecord } from "./identity";
 import type { Attestation } from "./attestation";
 import type { RegisteredSource } from "./sources";
 
@@ -60,6 +60,22 @@ export interface StorageAdapter {
   // is the sdk's job. when no row matches, implementations must throw an
   // error whose code property is exactly "AGENT_NOT_FOUND".
   revokeAgent(agentId: AgentId, revokedAt: string): Promise<void>;
+  // the actual rotation write, an internal storage method: persists the
+  // successor agent AND its key_rotations audit row in ONE atomic
+  // transaction, so a partial rotation (new identity without lineage, or a
+  // lineage pointing at nothing) can never be observed or persisted. called
+  // only from rotateAgent() in the sdk layer, AFTER the caller's owner-key
+  // signature, replay-window, and revocation-state checks have all passed.
+  // storage never re-verifies signatures. on a name-constraint violation
+  // implementations must throw DUPLICATE_NAME (createAgent-style, which the
+  // sdk retry loop branches on) and on a public-key collision
+  // DUPLICATE_PUBLIC_KEY; the transaction guarantees neither row persists
+  // after such a rejection. any other throw is a generic storage failure.
+  rotateAgent(record: AgentRecord, rotation: KeyRotationRecord): Promise<void>;
+  // audit read for the rotation lineage: every key_rotation whose
+  // old or new public key matches the agent id, newest first. not-found is
+  // an empty array, never an error.
+  getKeyRotations(agentId: AgentId): Promise<KeyRotationRecord[]>;
   getAttestations(agentId: AgentId, pagination?: PaginationParams): Promise<Paginated<AttestationRecord>>;
   // lookup used only for the optimistic idempotency check in attest(). like
   // getAgentByName, the read is an optimization, never the source of truth:

@@ -95,8 +95,9 @@ function isValidPermissions(value: unknown): value is AgentPermission[] {
 // spreading an AgentIdentity. the record type structurally cannot carry a
 // private key, and this construction keeps it that way even if AgentIdentity
 // gains fields later (adversarial review: key custody, no persistence path
-// can ever write key material).
-function toAgentRecord(manifest: AgentManifest): AgentRecord {
+// can ever write key material). exported for rotateAgent, which must build a
+// successor record through the exact same construction.
+export function toAgentRecord(manifest: AgentManifest): AgentRecord {
   return {
     name: manifest.name,
     publicKey: manifest.publicKey,
@@ -120,7 +121,8 @@ function toAgentRecord(manifest: AgentManifest): AgentRecord {
 // classifier must never match on a message string, only on the code, so an
 // adapter cannot accidentally masquerade an unrelated failure as a name
 // conflict (adversarial review: wrong error classification on retry).
-function isDuplicateNameError(err: unknown): boolean {
+// exported for rotateAgent's identical retry loop.
+export function isDuplicateNameError(err: unknown): boolean {
   if (typeof err !== "object" || err === null) return false;
   return (err as { code?: unknown }).code === "DUPLICATE_NAME";
 }
@@ -148,6 +150,11 @@ async function signManifestFields(fields: ManifestFields, privateKeyHex: string)
   const signature = await signAsync(new TextEncoder().encode(canonical), hexToBytes(privateKeyHex));
   return { ...fields, signature: bytesToHex(signature) };
 }
+
+// exported for rotateAgent, which signs the successor manifest with the NEW
+// identity key through the exact same canonicalize-and-sign path so the two
+// signers cannot drift about what "the manifest fields" are.
+export { signManifestFields };
 
 // every verification outcome is the same Result shape: ok true with a
 // VerificationResult. the verifier never throws at the boundary and never

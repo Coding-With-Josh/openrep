@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { createClient } from "@libsql/client";
 import { describe, expect, it } from "vitest";
 import { createLibsqlStorage } from "../src/index.js";
-import type { AgentRecord, AttestationRecord, RegisteredSource } from "../src/index.js";
+import type { AgentRecord, AttestationRecord, KeyRotationRecord, RegisteredSource } from "../src/index.js";
 
 let seq = 0;
 
@@ -387,6 +387,82 @@ describe("libsql storage adapter: bootstrap and upgrade", () => {
     const storage = await makeStorage();
     await storage.saveAgent(makeAgent({ name: "closeable.agent" }));
     await storage.close();
+    await storage.close();
+  });
+});
+
+describe("libsql storage adapter: wal hardening", () => {
+  it("puts an embedded file database into WAL journal mode, persistent across clients", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "openrep-libsql-wal-"));
+    const dbPath = join(dir, "openrep.db");
+    try {
+      const storage = await createLibsqlStorage({ url: `file:${dbPath}` });
+      await storage.saveAgent(makeAgent({ name: "wal-file.agent" }));
+      await storage.close();
+
+      // journal_mode is a persistent file property, so a SEPARATE client
+      // (the cli/later-connection analogue) must find the file already in
+      // WAL, exactly like the sqlite adapter's guarantee.
+      const raw = createClient({ url: `file:${dbPath}` });
+      const journal = await raw.execute("PRAGMA journal_mode");
+      await raw.close();
+      expect(journal.rows[0]?.["journal_mode"]).toBe("wal");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves :memory: databases untouched (WAL is impossible, no error)", async () => {
+    const storage = await createLibsqlStorage({ url: ":memory:" });
+    await storage.saveAgent(makeAgent({ name: "wal-memory.agent" }));
+    const raw = createClient({ url: ":memory:" });
+    const journal = await raw.execute("PRAGMA journal_mode");
+    await raw.close();
+    expect(journal.rows[0]?.["journal_mode"]).toBe("memory");
+    await storage.close();
+  });
+});
+
+function makeRotation(oldPublicKey: string, newPublicKey: string): KeyRotationRecord {
+  return {
+    oldPublicKey,
+    newPublicKey,
+    signedBy: "d0".repeat(32),
+    timestamp: "2026-03-01T00:00:00.000Z",
+    signature: "e0".repeat(64),
+  };
+}
+
+describe("libsql storage adapter: key rotation", () => {
+  it("persists the successor agent and its audit record atomically (one write batch), reachable from either end", async () => {
+    const storage = await makeStorage();
+    const oldId = makeAgent({ name: "libsql-old-lineage.agent" });
+    await storage.saveAgent(oldId);
+    const successor = makeAgent({ name: "libsql-successor.agent" });
+    const rotation = makeRotation(oldId.publicKey, successor.publicKey);
+
+    await storage.rotateAgent(successor, rotation);
+
+    expect((await storage.getAgent(successor.publicKey))!.name).toBe("libsql-successor.agent");
+    expect(await storage.getKeyRotations(oldId.publicKey)).toEqual([rotation]);
+    expect(await storage.getKeyRotations(successor.publicKey)).toEqual([rotation]);
+    await storage.close();
+  });
+
+  it("rolls back the whole write batch on a name collision, leaving no successor and no audit row", async () => {
+    const storage = await makeStorage();
+    const oldId = makeAgent({ name: "libsql-rotating.agent" });
+    await storage.saveAgent(oldId);
+    const successor = makeAgent({ name: "libsql-rotating.agent", publicKey: "pk-libsql-collider" }); // same name
+
+    await expect(
+      storage.rotateAgent(successor, makeRotation(oldId.publicKey, successor.publicKey)),
+    ).rejects.toMatchObject({ code: "DUPLICATE_NAME" });
+
+    // same no-partial-state proof as sqlite: no successor row, no dangling
+    // audit row, because the batch transaction rolled back as one unit.
+    expect(await storage.getAgent("pk-libsql-collider")).toBeNull();
+    expect(await storage.getKeyRotations(oldId.publicKey)).toEqual([]);
     await storage.close();
   });
 });

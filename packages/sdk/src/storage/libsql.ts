@@ -62,6 +62,7 @@ import { createClient, type Client, type InStatement, type Row } from "@libsql/c
 import type { ToolCall, ExternalVerification } from "../types/attestation.js";
 import type { AgentPermission } from "../types/identity.js";
 import type { AgentId } from "../types/identity.js";
+import type { KeyRotationRecord } from "../types/identity.js";
 import type { AgentRecord, AttestationRecord, Paginated, PaginationParams, StorageAdapter } from "../types/storage.js";
 import type { RegisteredSource } from "../types/sources.js";
 
@@ -117,6 +118,22 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   trust_weight REAL NOT NULL
 );`,
   `CREATE INDEX IF NOT EXISTS idx_attestations_agent_id ON attestations (agent_id);`,
+  // rotation lineage audit table, identical to sqlite.ts: both ends foreign
+  // key to agents(public_key), written with the successor agent inside ONE
+  // "write" batch transaction in rotateAgent below. new in this pass, so
+  // fresh and legacy databases both get it from this CREATE, no ALTER.
+  `CREATE TABLE IF NOT EXISTS key_rotations (
+  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  old_public_key TEXT NOT NULL,
+  new_public_key TEXT NOT NULL,
+  signed_by TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  FOREIGN KEY (old_public_key) REFERENCES agents(public_key),
+  FOREIGN KEY (new_public_key) REFERENCES agents(public_key)
+);`,
+  `CREATE INDEX IF NOT EXISTS idx_key_rotations_old ON key_rotations (old_public_key);`,
+  `CREATE INDEX IF NOT EXISTS idx_key_rotations_new ON key_rotations (new_public_key);`,
 ];
 
 // idempotency dedup, revocation columns, and external verification
@@ -164,7 +181,7 @@ async function ensureExternalVerificationSchema(client: Client): Promise<void> {
 }
 
 // one shared bootstrap so createLibsqlStorage cannot forget a guard.
-async function bootstrap(client: Client): Promise<void> {
+async function bootstrap(client: Client, url: string): Promise<void> {
   try {
     // explicit foreign key enforcement + readback assert, so even a future
     // libsql that defaults enforcement off cannot silently orphan
@@ -174,6 +191,27 @@ async function bootstrap(client: Client): Promise<void> {
     const fkValue = fk.rows[0]?.["foreign_keys"];
     if (Number(fkValue) !== 1) {
       throw new Error("PRAGMA foreign_keys did not report 1 after enabling; refusing to boot a store that may orphan attestations");
+    }
+    // WAL journal mode on embedded file databases, the same cross-process
+    // hardening as sqlite.ts: in delete mode a writer takes an exclusive
+    // lock and blocks every reader. the mode is a persistent file property
+    // (spike verified on the embedded engine), so the readback assert
+    // covers every later connection to the file, cli style. hosted
+    // databases (libsql:// and https://) are a network server where WAL is
+    // configured server side, deliberately skipped; :memory: cannot be WAL
+    // and the engine reports "memory", so only file: prefixes set it.
+    if (url.startsWith("file:")) {
+      await client.execute("PRAGMA journal_mode = WAL");
+      const journal = await client.execute("PRAGMA journal_mode");
+      const journalValue = journal.rows[0]?.["journal_mode"];
+      if (journalValue !== "wal") {
+        throw new Error("PRAGMA journal_mode did not report wal after enabling; refusing to boot a store that blocks readers");
+      }
+      // WAL crash-safety with NORMAL is the canonical combination (same
+      // rationale and caveat as sqlite.ts); per-connection like busy_timeout
+      // and foreign_keys, so the readback assert above is the load bearing
+      // check and this line is the durability tuning for this connection.
+      await client.execute("PRAGMA synchronous = NORMAL");
     }
     // schema bootstrap verified against both engines in the B1 spike.
     await client.batch([...SCHEMA_STATEMENTS], "deferred");
@@ -197,6 +235,26 @@ const UNIQUE_SOURCE_NAME = "registered_sources.source_name";
 // the message, prefixed by the engine's error envelope.
 const UNIQUE_IDEMPOTENCY = "attestations.agent_id, attestations.idempotency_key";
 const FK_VIOLATION_MESSAGE = "FOREIGN KEY constraint failed";
+
+// the agent insert shared by saveAgent and rotateAgent, so the two write
+// paths cannot drift about the column set or the parameter order. positional
+// parameters only, precisely like every other statement in this adapter.
+const INSERT_AGENT_SQL = `INSERT INTO agents (name, public_key, owner_public_key, memory_pointer, permissions, created_at, manifest_version, signature, revoked_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+function agentRecordArgs(record: AgentRecord): Array<string | number | null> {
+  return [
+    record.name,
+    record.publicKey,
+    record.ownerPublicKey,
+    record.memoryPointer,
+    JSON.stringify(record.permissions),
+    record.createdAt,
+    record.manifestVersion,
+    record.signature,
+    record.revokedAt,
+  ];
+}
 
 const DEFAULT_PAGE_LIMIT = 50;
 const MAX_PAGE_LIMIT = 1000;
@@ -428,21 +486,7 @@ export class LibsqlStorageAdapter implements StorageAdapter {
   async saveAgent(record: AgentRecord): Promise<void> {
     assertNoPrivateKey(record);
     try {
-      await this.client.execute({
-        sql: `INSERT INTO agents (name, public_key, owner_public_key, memory_pointer, permissions, created_at, manifest_version, signature, revoked_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        args: [
-          record.name,
-          record.publicKey,
-          record.ownerPublicKey,
-          record.memoryPointer,
-          JSON.stringify(record.permissions),
-          record.createdAt,
-          record.manifestVersion,
-          record.signature,
-          record.revokedAt,
-        ],
-      });
+      await this.client.execute({ sql: INSERT_AGENT_SQL, args: agentRecordArgs(record) });
     } catch (err) {
       // schema unique constraint on agents.name is the authoritative guard
       // for createAgent's concurrent-create retry loop.
@@ -457,6 +501,62 @@ export class LibsqlStorageAdapter implements StorageAdapter {
       // storage failure, never as a retryable name conflict.
       throw err;
     }
+  }
+
+  async rotateAgent(record: AgentRecord, rotation: KeyRotationRecord): Promise<void> {
+    assertNoPrivateKey(record);
+    try {
+      // one "write" batch IS one transaction on both engines: the successor
+      // agents row and its key_rotations audit row commit or roll back
+      // together, so a partial rotation (new identity with no lineage, or a
+      // lineage pointing at nothing) cannot be observed (adversarial
+      // review: partial write / state injection). the agent insert comes
+      // first so the audit row's foreign keys resolve inside the batch.
+      await this.client.batch(
+        [
+          { sql: INSERT_AGENT_SQL, args: agentRecordArgs(record) },
+          {
+            sql: `INSERT INTO key_rotations (old_public_key, new_public_key, signed_by, timestamp, signature)
+                  VALUES (?, ?, ?, ?, ?)`,
+            args: [
+              rotation.oldPublicKey,
+              rotation.newPublicKey,
+              rotation.signedBy,
+              rotation.timestamp,
+              rotation.signature,
+            ],
+          },
+        ],
+        "write",
+      );
+    } catch (err) {
+      // same classification as saveAgent: the name constraint is what the
+      // sdk's retry loop branches on, a public key collision is corruption,
+      // and everything else is a generic storage failure.
+      if (isUniqueViolation(err, UNIQUE_AGENT_NAME)) {
+        throw codedError("DUPLICATE_NAME", `agent name already exists: ${record.name}`, err);
+      }
+      if (isUniqueViolation(err, UNIQUE_AGENT_PUBLIC_KEY)) {
+        throw codedError("DUPLICATE_PUBLIC_KEY", `agent public key already exists: ${record.publicKey}`, err);
+      }
+      throw err;
+    }
+  }
+
+  async getKeyRotations(agentId: AgentId): Promise<KeyRotationRecord[]> {
+    // audit lineage lookup on either end of the lineage, newest first.
+    const result = await this.client.execute({
+      sql: `SELECT old_public_key AS oldPublicKey, new_public_key AS newPublicKey, signed_by AS signedBy, timestamp, signature
+            FROM key_rotations WHERE old_public_key = ? OR new_public_key = ? ORDER BY row_id DESC`,
+      args: [agentId, agentId],
+    });
+    return result.rows.map((row) => ({
+      oldPublicKey: str(row, "oldPublicKey"),
+      newPublicKey: str(row, "newPublicKey"),
+      signedBy: str(row, "signedBy"),
+      timestamp: str(row, "timestamp"),
+      signature: str(row, "signature"),
+    }));
   }
 
   async getAttestations(agentId: AgentId, pagination: PaginationParams = {}): Promise<Paginated<AttestationRecord>> {
@@ -600,6 +700,6 @@ function attestationFromRow(row: SqlRow): AttestationRecord {
 // function creates one client per invocation.
 export async function createLibsqlStorage(config: LibsqlStorageConfig): Promise<LibsqlStorageAdapter> {
   const client = createClient({ url: config.url, authToken: config.authToken });
-  await bootstrap(client);
+  await bootstrap(client, config.url);
   return new LibsqlStorageAdapter(client);
 }

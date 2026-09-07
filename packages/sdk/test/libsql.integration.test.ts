@@ -30,9 +30,11 @@
 // actually takes effect against the hosted primary (the spike verified the
 // pragma persists per client; this proves the adapter wires it in).
 import { createClient } from "@libsql/client";
+import { signAsync, verifyAsync } from "@noble/ed25519";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { createAgent, createLibsqlStorage, type LibsqlStorageAdapter } from "../src/index.js";
+import { canonicalize, createAgent, createLibsqlStorage, rotateAgent, type LibsqlStorageAdapter } from "../src/index.js";
 import type { AgentRecord, AttestationRecord } from "../src/index.js";
+import { bytesToHex, hexToBytes } from "../src/hex.js";
 
 // TURSO_TEST_DATABASE_URL is the sanctioned escape hatch for a scratch
 // database: set it and the suite runs against that instead of the shared
@@ -103,8 +105,12 @@ describe.skipIf(!hosted)("libsql integration (hosted turso)", () => {
   afterEach(async () => {
     if (!hosted || createdKeys.length === 0) return;
     for (const key of createdKeys.splice(0)) {
-      // foreign key order: attestations reference agents, so children go
-      // first. best-effort: a missing row is not an error.
+      // foreign key order: key_rotations and attestations both reference
+      // agents, so children go first. best-effort: a missing row is not an
+      // error. the rotation tests delete by either end of the lineage
+      // because a partial write (if the hosted batch were ever non-atomic)
+      // could leave the audit row referenced from either side.
+      await cleanupClient!.execute({ sql: "DELETE FROM key_rotations WHERE old_public_key = ? OR new_public_key = ?", args: [key, key] });
       await cleanupClient!.execute({ sql: "DELETE FROM attestations WHERE agent_id = ?", args: [key] });
       await cleanupClient!.execute({ sql: "DELETE FROM agents WHERE public_key = ?", args: [key] });
     }
@@ -192,4 +198,109 @@ describe.skipIf(!hosted)("libsql integration (hosted turso)", () => {
     // assigned) name, even in a partial-write failure.
     expect(await storage!.getAgentByName(smuggled.name)).toBeNull();
   }, TEST_TIMEOUT);
+
+  it("rotates an agent end to end on the hosted primary: successor, audit row, either-end lookup, old id live", async () => {
+    const created = await createAgent({ storage: storage! });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const oldId = created.value;
+    createdKeys.push(oldId.publicKey);
+
+    const timestamp = new Date().toISOString();
+    const signature = await ownerSign({ agentId: oldId.publicKey, timestamp }, oldId.ownerPrivateKey);
+    const rotated = await rotateAgent({ agentId: oldId.publicKey, timestamp, signature }, storage!);
+    expect(rotated.ok).toBe(true);
+    if (!rotated.ok) return;
+    const successor = rotated.value;
+    createdKeys.push(successor.publicKey);
+
+    expect(successor.publicKey).not.toBe(oldId.publicKey);
+    expect(successor.ownerPublicKey).toBe(oldId.ownerPublicKey);
+
+    // rotation is successor issuance, never a silent re-key: the old id is
+    // still live on the hosted primary and the successor persists.
+    expect((await storage!.getAgent(oldId.publicKey))!.revokedAt).toBeNull();
+    expect(await storage!.getAgent(successor.publicKey)).not.toBeNull();
+
+    // the audit row landed exactly once in the real table, and the lineage
+    // lookup works from both ends of the chain.
+    const fromOld = await storage!.getKeyRotations(oldId.publicKey);
+    const fromNew = await storage!.getKeyRotations(successor.publicKey);
+    expect(fromOld).toHaveLength(1);
+    expect(fromNew).toEqual(fromOld);
+
+    // the audit row is self-verifying offline against the owner key over
+    // exactly the request bytes, proving the hosted write stored the
+    // signature uncorrupted.
+    const rotation = fromOld[0];
+    expect(rotation.signedBy).toBe(oldId.ownerPublicKey);
+    const valid = await verifyAsync(
+      hexToBytes(rotation.signature),
+      new TextEncoder().encode(canonicalize({ agentId: oldId.publicKey, timestamp })),
+      hexToBytes(oldId.ownerPublicKey),
+      { zip215: false },
+    );
+    expect(valid).toBe(true);
+  }, TEST_TIMEOUT);
+
+  it("records a second rotation of the same old id as a new lineage row, newest first, on the hosted primary", async () => {
+    const created = await createAgent({ storage: storage! });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const oldId = created.value;
+    createdKeys.push(oldId.publicKey);
+
+    const gen1 = await runRotation(oldId);
+    createdKeys.push(gen1.publicKey);
+    const gen2 = await runRotation(oldId);
+    createdKeys.push(gen2.publicKey);
+
+    const lineage = await storage!.getKeyRotations(oldId.publicKey);
+    expect(lineage.map((r) => r.newPublicKey)).toEqual([gen2.publicKey, gen1.publicKey]);
+  }, TEST_TIMEOUT);
+
+  it("rolls back the hosted write batch on a name collision, leaving no successor and no audit row", async () => {
+    const victim = makeAgent(`libsql-int-rotate-victim-${runId}`);
+    await storage!.saveAgent(victim);
+    createdKeys.push(victim.publicKey);
+    // a hand-built successor whose name collides with the victim: the batch
+    // insert of the agent row trips the unique name constraint, and the
+    // audit insert must roll back with it.
+    const successor = { ...makeAgent(`libsql-int-rotate-succ-${runId}`), name: victim.name };
+
+    await expect(
+      storage!.rotateAgent(successor, {
+        oldPublicKey: victim.publicKey,
+        newPublicKey: successor.publicKey,
+        signedBy: "d0".repeat(32),
+        timestamp: "2026-03-01T00:00:00.000Z",
+        signature: "e0".repeat(64),
+      }),
+    ).rejects.toMatchObject({ code: "DUPLICATE_NAME" });
+
+    // the hosted primary left no partial state: no successor agent row and
+    // no dangling audit row, exactly the embedded-engine guarantee.
+    expect(await storage!.getAgent(successor.publicKey)).toBeNull();
+    expect(await storage!.getKeyRotations(victim.publicKey)).toEqual([]);
+  }, TEST_TIMEOUT);
 });
+
+// signs a rotation request with the agent's own owner key, mirroring the
+// sdk contract: canonicalize({ agentId, timestamp }) with real ed25519.
+async function ownerSign(req: { agentId: string; timestamp: string }, ownerSecretHex: string): Promise<string> {
+  const signature = await signAsync(
+    new TextEncoder().encode(canonicalize({ agentId: req.agentId, timestamp: req.timestamp })),
+    hexToBytes(ownerSecretHex),
+  );
+  return bytesToHex(signature);
+}
+
+// full sdk rotateAgent round trip used by the lineage-ordering test, with
+// the shared hosted adapter as the storage argument.
+async function runRotation(identity: { publicKey: string; ownerPrivateKey: string }): Promise<{ publicKey: string }> {
+  const timestamp = new Date().toISOString();
+  const signature = await ownerSign({ agentId: identity.publicKey, timestamp }, identity.ownerPrivateKey);
+  const rotated = await rotateAgent({ agentId: identity.publicKey, timestamp, signature }, storage!);
+  if (!rotated.ok) throw new Error(`rotation failed: ${rotated.error.code}`);
+  return rotated.value;
+}

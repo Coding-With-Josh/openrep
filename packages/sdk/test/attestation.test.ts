@@ -13,6 +13,7 @@ import type {
   AgentRecord,
   AttestationInput,
   AttestationRecord,
+  KeyRotationRecord,
   Paginated,
   PaginationParams,
   RegisteredSource,
@@ -90,6 +91,14 @@ class FakeStorage implements StorageAdapter {
   async revokeAgent(agentId: AgentId, _revokedAt: string): Promise<void> {
     this.calls.push("revokeAgent");
     this.revokedAgentIds.add(agentId);
+  }
+
+  async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
+    throw new Error("not on the attest path");
+  }
+
+  async getKeyRotations(_agentId: AgentId): Promise<KeyRotationRecord[]> {
+    throw new Error("not on the attest path");
   }
 
   async getAttestations(_agentId: AgentId, _pagination?: PaginationParams): Promise<Paginated<AttestationRecord>> {

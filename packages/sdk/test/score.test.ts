@@ -5,6 +5,7 @@ import type {
   AgentId,
   AgentRecord,
   AttestationRecord,
+  KeyRotationRecord,
   Paginated,
   PaginationParams,
   RegisteredSource,
@@ -52,6 +53,14 @@ class FakeStorage implements StorageAdapter {
     const existing = this.byId.get(agentId);
     if (existing === undefined) throw codedError("AGENT_NOT_FOUND", "no such agent");
     this.byId.set(agentId, { ...existing, revokedAt });
+  }
+
+  async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
+    throw new Error("not on the score path");
+  }
+
+  async getKeyRotations(_agentId: AgentId): Promise<KeyRotationRecord[]> {
+    throw new Error("not on the score path");
   }
 
   async getAttestations(agentId: AgentId, pagination?: PaginationParams): Promise<Paginated<AttestationRecord>> {

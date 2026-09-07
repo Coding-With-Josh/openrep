@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { signAsync } from "@noble/ed25519";
 import { revokeAgent, REVOCATION_REQUEST_MAX_AGE_MS, canonicalize, createAgent } from "../src/index.js";
-import type { AgentId, AgentRecord, RevocationRequest } from "../src/index.js";
+import type { AgentId, AgentRecord, KeyRotationRecord, RevocationRequest } from "../src/index.js";
 import type { AgentPermission } from "../src/index.js";
 import type { AttestationRecord, Paginated, PaginationParams, RegisteredSource, StorageAdapter } from "../src/index.js";
 import { bytesToHex, hexToBytes } from "../src/hex.js";
@@ -38,6 +38,14 @@ class FakeStorage implements StorageAdapter {
     const existing = this.byId.get(agentId);
     if (existing === undefined) throw codedError("AGENT_NOT_FOUND", "no such agent");
     this.byId.set(agentId, { ...existing, revokedAt });
+  }
+
+  async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
+    throw new Error("not on the revocation path");
+  }
+
+  async getKeyRotations(_agentId: AgentId): Promise<KeyRotationRecord[]> {
+    throw new Error("not on the revocation path");
   }
 
   async getAttestations(_agentId: AgentId, _pagination?: PaginationParams): Promise<Paginated<AttestationRecord>> {

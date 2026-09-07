@@ -39,6 +39,7 @@ import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import type { ToolCall, ExternalVerification } from "../types/attestation.js";
 import type { AgentPermission } from "../types/identity.js";
 import type { AgentId } from "../types/identity.js";
+import type { KeyRotationRecord } from "../types/identity.js";
 import type { AgentRecord, AttestationRecord, Paginated, PaginationParams, StorageAdapter } from "../types/storage.js";
 import type { RegisteredSource } from "../types/sources.js";
 
@@ -86,14 +87,38 @@ CREATE TABLE IF NOT EXISTS registered_sources (
   registered_at TEXT NOT NULL,
   trust_weight REAL NOT NULL
 );
+
+-- rotation lineage audit table. both ends foreign key to agents(public_key)
+-- so an audit row can never point at a nonexistent identity and the old
+-- agent row can never be dropped while its lineage still names it. the two
+-- writes (agents + key_rotations) happen in ONE transaction inside
+-- rotateAgent below; the table is new in this pass so fresh and legacy
+-- databases both get it from this CREATE, no ALTER is needed.
+CREATE TABLE IF NOT EXISTS key_rotations (
+  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  old_public_key TEXT NOT NULL,
+  new_public_key TEXT NOT NULL,
+  signed_by TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  signature TEXT NOT NULL,
+  FOREIGN KEY (old_public_key) REFERENCES agents(public_key),
+  FOREIGN KEY (new_public_key) REFERENCES agents(public_key)
+);
 `;
 
-// the only hand written index in the base schema. the unique and primary key
+// the hand written indexes in the base schema. the unique and primary key
 // constraints above already create indexes for agents.name, agents.public_key,
-// attestations.id, and registered_sources.source_name, so this covers the
-// one lookup the constraints do not: paging attestations by agent.
+// attestations.id, and registered_sources.source_name, so these cover the
+// lookups the constraints do not: paging attestations by agent, and the
+// rotation audit lookup by either end of the lineage (old and new key are
+// both queried, so each column gets its own index).
 const ATTESTATIONS_BY_AGENT_INDEX = `
 CREATE INDEX IF NOT EXISTS idx_attestations_agent_id ON attestations (agent_id);
+`;
+
+const KEY_ROTATION_INDEXES = `
+CREATE INDEX IF NOT EXISTS idx_key_rotations_old ON key_rotations (old_public_key);
+CREATE INDEX IF NOT EXISTS idx_key_rotations_new ON key_rotations (new_public_key);
 `;
 
 // idempotency dedup: the column plus the composite unique index. fresh
@@ -414,6 +439,67 @@ class SqliteStorageAdapter implements StorageAdapter {
     }
   }
 
+  async rotateAgent(record: AgentRecord, rotation: KeyRotationRecord): Promise<void> {
+    assertNoPrivateKey(record);
+    // the ONE atomic write behind sdk-level rotateAgent: the successor
+    // agents row and its key_rotations audit row commit or roll back
+    // together. the append-only ledger has no delete path, so an
+    // app-level "undo the successor if the audit write fails" is
+    // impossible; the transaction is what makes a partial rotation
+    // unobservable (adversarial review: partial write / state injection).
+    // BEGIN IMMEDIATE takes the write lock up front so two processes
+    // rotating on the same file cannot deadlock with each other, and
+    // busy_timeout covers the short contention window.
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      // same-connection insert inside the open transaction; saveAgent's
+      // DUPLICATE_NAME / DUPLICATE_PUBLIC_KEY mapping applies unchanged.
+      await this.saveAgent(record);
+      this.db
+        .prepare(
+          `INSERT INTO key_rotations (old_public_key, new_public_key, signed_by, timestamp, signature)
+           VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          rotation.oldPublicKey,
+          rotation.newPublicKey,
+          rotation.signedBy,
+          rotation.timestamp,
+          rotation.signature,
+        );
+      this.db.exec("COMMIT");
+    } catch (err) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        // a failed rollback must not mask the original error; nothing
+        // further can be done with a broken transaction anyway.
+      }
+      throw err; // saveAgent's coded errors propagate unchanged
+    }
+  }
+
+  async getKeyRotations(agentId: AgentId): Promise<KeyRotationRecord[]> {
+    // audit lineage lookup: an agent id can appear on either end of a
+    // rotation (it was the old id once, then became an old id again after
+    // a later rotation... no: it can be the old end of rotations it was
+    // rotated out of, and the new end of the rotation that created it),
+    // so rows match on old OR new. not-found is an empty array.
+    const rows = this.db
+      .prepare(
+        `SELECT old_public_key AS oldPublicKey, new_public_key AS newPublicKey, signed_by AS signedBy, timestamp, signature
+         FROM key_rotations WHERE old_public_key = ? OR new_public_key = ? ORDER BY row_id DESC`,
+      )
+      .all(agentId, agentId);
+    return rows.map((row) => ({
+      oldPublicKey: str(row, "oldPublicKey"),
+      newPublicKey: str(row, "newPublicKey"),
+      signedBy: str(row, "signedBy"),
+      timestamp: str(row, "timestamp"),
+      signature: str(row, "signature"),
+    }));
+  }
+
   async getAttestations(agentId: AgentId, pagination: PaginationParams = {}): Promise<Paginated<AttestationRecord>> {
     const limit = normalizeLimit(pagination.limit);
     const cursor = pagination.cursor === undefined ? null : parseCursor(pagination.cursor);
@@ -577,8 +663,33 @@ export function createSqliteStorage(databasePath: string): StorageAdapter {
     // from failing instantly under the cli.
     db = new DatabaseSync(databasePath, { enableForeignKeyConstraints: true });
     db.exec("PRAGMA busy_timeout = 5000");
+    // WAL journal mode on file-backed databases is the cross-process
+    // concurrency fix: in delete mode a writer takes an exclusive lock and
+    // blocks every reader, and concurrent writers fail with database is
+    // locked. WAL lets readers proceed while a writer holds the write
+    // mutex, and the write mutex itself is short-held, so busy_timeout
+    // above covers the only remaining fights. the mode is a persistent
+    // property stored in the database file, asserted on readback exactly
+    // like the foreign keys pragma, so it never depends on a default
+    // drifting under us. in-memory databases cannot be WAL, the pragma
+    // reports "memory" and is a verified no-op, so skip it there.
+    // PRAGMA synchronous = NORMAL is the canonical WAL durability setting:
+    // crash-safe against app and os crashes (no corruption), with the rare
+    // tradeoff that a power loss right after commit may lose the very last
+    // transaction. the sqlite docs recommend NORMAL over FULL specifically
+    // for WAL, and it is the user-confirmed choice for this adapter.
+    const fileBacked = databasePath !== ":memory:";
+    if (fileBacked) {
+      db.exec("PRAGMA journal_mode = WAL");
+      const journal = db.prepare("PRAGMA journal_mode").get() as { journal_mode?: unknown };
+      if (journal.journal_mode !== "wal") {
+        throw new Error(`PRAGMA journal_mode did not report wal after enabling; refusing to boot a store that blocks readers (got ${String(journal.journal_mode)})`);
+      }
+      db.exec("PRAGMA synchronous = NORMAL");
+    }
     db.exec(SCHEMA);
     db.exec(ATTESTATIONS_BY_AGENT_INDEX);
+    db.exec(KEY_ROTATION_INDEXES);
     ensureIdempotencySchema(db);
     ensureRevocationSchema(db);
     ensureExternalVerificationSchema(db);

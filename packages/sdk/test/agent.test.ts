@@ -8,7 +8,7 @@ import {
   generateName,
   verifyManifest,
 } from "../src/index.js";
-import type { AgentRecord, Paginated, PaginationParams, RegisteredSource, StorageAdapter } from "../src/index.js";
+import type { AgentRecord, KeyRotationRecord, Paginated, PaginationParams, RegisteredSource, StorageAdapter } from "../src/index.js";
 import type { AgentId, AgentManifest, AgentPermission } from "../src/index.js";
 import type { AttestationRecord } from "../src/index.js";
 import { bytesToHex, hexToBytes } from "../src/hex.js";
@@ -61,6 +61,14 @@ class FakeStorage implements StorageAdapter {
     const existing = this.byId.get(agentId);
     if (existing === undefined) throw notFoundError();
     this.byId.set(agentId, { ...existing, revokedAt });
+  }
+
+  async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
+    throw new Error("not on the createAgent path");
+  }
+
+  async getKeyRotations(_agentId: AgentId): Promise<KeyRotationRecord[]> {
+    throw new Error("not on the createAgent path");
   }
 
   async getAttestations(_agentId: AgentId, _pagination?: PaginationParams): Promise<Paginated<AttestationRecord>> {

@@ -18,12 +18,11 @@ export interface MasterKeyConfig {
   readonly source: "env"; // the key comes from the environment, never supplied inline
 }
 
-// returns the master key from the environment. throws a typed OpenRepError
-// with code MISSING_MASTER_KEY when it is missing, never proceeds with an
-// empty or default key.
-export function getMasterKey(): string {
-  // TODO: read env, validate non-empty, throw typed error when missing
-  throw new Error("Not implemented yet");
+// returns the master key from the environment. implementation lives in
+// src/security.ts (the package entry exports that one explicitly, which
+// shadows any star-exported duplicate); this file defines the contract only.
+export interface MasterKeyProvider {
+  getMasterKey(): string;
 }
 
 // the key custody policy as types plus comments, not just prose. code that
@@ -43,9 +42,9 @@ export interface KeyCustodyPolicy {
   rawKeyPersistence: "never";
 }
 
-// storage for session-scoped encrypted keys. the concrete implementation
-// for this pass can be an in-memory store with expiry, but the interface is
-// storage agnostic so it can be swapped for a real backing store without
+// storage for session-scoped encrypted keys. the concrete implementation is
+// src/session-store.ts (sqlite-backed, expiry enforced); the interface stays
+// storage agnostic so it can be swapped for another backing store without
 // changing calling code.
 export interface SessionKeyStore {
   get(agentId: AgentId): Promise<EncryptedKeyRecord | null>;

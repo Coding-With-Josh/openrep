@@ -8,7 +8,7 @@
 // valid record, and signature verification is not this layer's job.
 import { describe, expect, it } from "vitest";
 import { createSqliteStorage } from "../src/index.js";
-import type { AgentRecord, AttestationRecord, RegisteredSource } from "../src/index.js";
+import type { AgentRecord, AttestationRecord, KeyRotationRecord, RegisteredSource } from "../src/index.js";
 
 let seq = 0;
 
@@ -310,5 +310,64 @@ describe("sqlite storage adapter: registered sources", () => {
     await expect(
       storage.saveRegisteredSource({ sourceName: "alpha-platform", registeredAt: "2026-01-02T00:00:00.000Z", trustWeight: 2 }),
     ).rejects.toMatchObject({ code: "DUPLICATE_SOURCE_NAME" });
+  });
+});
+
+function makeRotation(oldPublicKey: string, newPublicKey: string): KeyRotationRecord {
+  return {
+    oldPublicKey,
+    newPublicKey,
+    signedBy: "d0".repeat(32),
+    timestamp: "2026-03-01T00:00:00.000Z",
+    signature: "e0".repeat(64),
+  };
+}
+
+describe("sqlite storage adapter: key rotation", () => {
+  it("persists the successor agent and its audit record atomically, reachable from either end of the lineage", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const oldId = makeAgent({ name: "old-lineage.agent" });
+    await storage.saveAgent(oldId);
+    const successor = makeAgent({ name: "successor-lineage.agent" });
+    const rotation = makeRotation(oldId.publicKey, successor.publicKey);
+
+    await storage.rotateAgent(successor, rotation);
+
+    expect((await storage.getAgent(successor.publicKey))!.name).toBe("successor-lineage.agent");
+    // the audit row is honest: full field round trip, no lossy storage
+    expect(await storage.getKeyRotations(oldId.publicKey)).toEqual([rotation]);
+    // a successor's id is also a lineage key, so the lookup works from the
+    // new end of the chain as well.
+    expect(await storage.getKeyRotations(successor.publicKey)).toEqual([rotation]);
+  });
+
+  it("rolls back the whole transaction on a name collision, leaving no successor and no audit row", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const oldId = makeAgent({ name: "rotating.agent" });
+    await storage.saveAgent(oldId);
+    const successor = makeAgent({ name: "rotating.agent", publicKey: "pk-collider" }); // same name
+
+    await expect(
+      storage.rotateAgent(successor, makeRotation(oldId.publicKey, successor.publicKey)),
+    ).rejects.toMatchObject({ code: "DUPLICATE_NAME" });
+
+    // the append-only ledger has no delete path, so this assertion is what
+    // guarantees a failed rotation attempt is never partially observable:
+    // neither the successor row nor the dangling audit row survived.
+    expect(await storage.getAgent("pk-collider")).toBeNull();
+    expect(await storage.getKeyRotations(oldId.publicKey)).toEqual([]);
+  });
+
+  it("returns rotation lineage newest first across multiple rotations of one agent", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const oldId = makeAgent({ name: "multi-rotate.agent" });
+    await storage.saveAgent(oldId);
+    const gen2 = makeAgent({ name: "second-gen.agent" });
+    await storage.rotateAgent(gen2, makeRotation(oldId.publicKey, gen2.publicKey));
+    const gen3 = makeAgent({ name: "third-gen.agent" });
+    await storage.rotateAgent(gen3, makeRotation(oldId.publicKey, gen3.publicKey));
+
+    const lineage = await storage.getKeyRotations(oldId.publicKey);
+    expect(lineage.map((r) => r.newPublicKey)).toEqual([gen3.publicKey, gen2.publicKey]);
   });
 });
