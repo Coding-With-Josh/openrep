@@ -1,6 +1,6 @@
 "use client";
 
-import { memo } from "react";
+import { memo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
@@ -106,3 +106,45 @@ export const Markdown = memo(function Markdown({ content }: { content: string })
     </ReactMarkdown>
   );
 });
+
+// flat text variant: renders the same untrusted model output as normal
+// text with no styling, so a ledger view reads like prose instead of
+// showing raw markdown syntax. every node collapses to plain text: no
+// headings, no bullet markers, no code chips, no clickable links. html
+// from the model stays escaped (no rehype-raw) and link schemes never
+// apply because links are dropped entirely.
+const Text = ({ children }: { children?: ReactNode }) => <>{children}</>;
+
+const PLAIN_COMPONENTS: Components = {
+  h1: Text,
+  h2: Text,
+  h3: Text,
+  h4: Text,
+  h5: Text,
+  h6: Text,
+  p: ({ children }) => <p className="first:mt-0 last:mb-0">{children}</p>,
+  ul: Text,
+  ol: Text,
+  li: Text,
+  a: Text,
+  strong: Text,
+  em: Text,
+  del: Text,
+  hr: () => null,
+  blockquote: Text,
+  pre: ({ children }) => <div className="whitespace-pre-wrap">{children}</div>,
+  code: Text,
+  table: Text,
+  thead: Text,
+  tbody: Text,
+  tr: Text,
+  th: Text,
+  td: Text,
+  img: () => null,
+};
+
+export const MarkdownPlain = ({ content }: { content: string }) => (
+  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={PLAIN_COMPONENTS}>
+    {content}
+  </ReactMarkdown>
+);
