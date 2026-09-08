@@ -58,13 +58,26 @@
 // libsql error so a network or server failure is never miscategorized as a
 // constraint conflict. read paths never throw for not-found, they return
 // null.
+import { randomUUID } from "node:crypto";
 import { createClient, type Client, type InStatement, type Row } from "@libsql/client";
 import type { ToolCall, ExternalVerification } from "../types/attestation.js";
 import type { AgentPermission } from "../types/identity.js";
 import type { AgentId } from "../types/identity.js";
 import type { KeyRotationRecord } from "../types/identity.js";
 import type { SessionKeyBackend, SessionKeyRow } from "../types/security.js";
-import type { AgentRecord, AttestationRecord, Paginated, PaginationParams, StorageAdapter } from "../types/storage.js";
+import type {
+  AccountLink,
+  AgentRecord,
+  AttestationRecord,
+  ChatMessage,
+  ChatMessageRecord,
+  ChatRole,
+  ChatSession,
+  Paginated,
+  PaginationParams,
+  StorageAdapter,
+  UserRecord,
+} from "../types/storage.js";
 import type { RegisteredSource } from "../types/sources.js";
 
 // the connection config for one libsql storage adapter instance. the
@@ -153,6 +166,58 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   expires_at_epoch_ms INTEGER NOT NULL,
   UNIQUE (agent_id, owner_user_id),
   FOREIGN KEY (agent_id) REFERENCES agents(public_key)
+);`,
+  // web chat history, identical to sqlite.ts: one session per (agent, owner)
+  // pair enforced by a schema unique constraint, and an append-only message
+  // ledger. the session id is storage generated (randomUUID) and never part
+  // of any public addressing scheme: every read and write resolves the
+  // (agent_id, owner_user_id) pair, so an owner can never address another
+  // owner's conversation. new in this pass, so fresh and legacy databases
+  // both get these from CREATE IF NOT EXISTS, no ALTER.
+  `CREATE TABLE IF NOT EXISTS chat_sessions (
+  id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  owner_user_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (agent_id, owner_user_id),
+  FOREIGN KEY (agent_id) REFERENCES agents(public_key)
+);`,
+  `CREATE TABLE IF NOT EXISTS chat_messages (
+  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id TEXT NOT NULL,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  tools_used TEXT NOT NULL,
+  timestamp TEXT NOT NULL,
+  FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
+);`,
+  // message reads join on session_id and order by row_id; sqlite does not
+  // index foreign key columns automatically, so this keeps a conversation
+  // read proportional to the conversation, not the database.
+  `CREATE INDEX IF NOT EXISTS idx_chat_messages_session_id ON chat_messages (session_id);`,
+  // web account layer, identical to sqlite.ts: web-owned tables persisted
+  // here, policy owned by the web auth layer. email is globally unique so a
+  // duplicate sign-in collides at insert; password_hash NULL means the
+  // account is oauth-only and password claims against it must be refused by
+  // the web layer. accounts uniquely map one external identity
+  // (provider, provider_account_id) to one user; the user_id foreign key
+  // keeps a link from naming a nonexistent account. new in this pass, fresh
+  // and legacy databases both get them from CREATE IF NOT EXISTS, no ALTER.
+  `CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT,
+  name TEXT,
+  created_at TEXT NOT NULL
+);`,
+  `CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  provider_account_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (provider, provider_account_id),
+  FOREIGN KEY (user_id) REFERENCES users(id)
 );`,
 ];
 
@@ -420,6 +485,31 @@ function sessionKeyFromRow(row: SqlRow): SessionKeyRow {
   };
 }
 
+// chat rows come back as plain records like every other read; the accessors
+// fail loudly on a corrupt shape. the role check is explicit (not a blind
+// cast) so an unknown role can never be shipped upstream.
+function chatSessionFromRow(row: SqlRow): ChatSession {
+  return {
+    id: str(row, "id"),
+    agentId: str(row, "agentId"),
+    ownerUserId: str(row, "ownerUserId"),
+    createdAt: str(row, "createdAt"),
+  };
+}
+
+function chatMessageFromRow(row: SqlRow): ChatMessage {
+  const role = str(row, "role");
+  if (role !== "user" && role !== "assistant") {
+    throw new Error(`stored row column role has an unknown chat role: ${role}`);
+  }
+  return {
+    role: role as ChatRole,
+    content: str(row, "content"),
+    toolsUsed: parseToolsUsed(row),
+    timestamp: str(row, "timestamp"),
+  };
+}
+
 function normalizeLimit(limit: number | undefined): number {
   if (limit === undefined) return DEFAULT_PAGE_LIMIT;
   if (!Number.isInteger(limit) || limit < 1) {
@@ -471,6 +561,60 @@ const ATTESTATION_COLUMNS = `
   timestamp,
   schema_version AS schemaVersion,
   external_verification AS externalVerification
+`;
+
+// the chat session select list, shared so read aliasing cannot drift.
+const CHAT_SESSION_COLUMNS = `
+  id,
+  agent_id AS agentId,
+  owner_user_id AS ownerUserId,
+  created_at AS createdAt
+`;
+
+// the chat message select list. every column is qualified with the session
+// alias because the read joins chat_messages against chat_sessions.
+const CHAT_MESSAGE_COLUMNS = `
+  m.role,
+  m.content,
+  m.tools_used AS toolsUsed,
+  m.timestamp
+`;
+
+// the join-scoped agent read used by listOwnedAgents. every column is
+// qualified with the agents alias because row_id exists in both joined
+// tables and an unqualified reference would be ambiguous.
+const OWNED_AGENT_COLUMNS = `
+  a.row_id AS rowId,
+  a.name,
+  a.public_key AS publicKey,
+  a.owner_public_key AS ownerPublicKey,
+  a.memory_pointer AS memoryPointer,
+  a.permissions,
+  a.created_at AS createdAt,
+  a.manifest_version AS manifestVersion,
+  a.signature,
+  a.revoked_at AS revokedAt
+`;
+
+// the users select list, shared so read aliasing cannot drift between the
+// two user reads.
+const USER_COLUMNS = `
+  id,
+  email,
+  password_hash AS passwordHash,
+  name,
+  created_at AS createdAt
+`;
+
+// the accounts select list: getAccountLink is the only read, but keeping the
+// list a constant means the read aliases cannot drift from a future second
+// read.
+const ACCOUNT_COLUMNS = `
+  id,
+  user_id AS userId,
+  provider,
+  provider_account_id AS providerAccountId,
+  created_at AS createdAt
 `;
 
 export class LibsqlStorageAdapter implements StorageAdapter, SessionKeyBackend {
@@ -750,6 +894,212 @@ export class LibsqlStorageAdapter implements StorageAdapter, SessionKeyBackend {
       throw err;
     }
   }
+
+  async createChatSession(agentId: AgentId, ownerUserId: string, createdAt: string): Promise<ChatSession> {
+    // optimistic read first: the schema unique constraint on the pair is the
+    // source of truth, this lookup only avoids throwing away work. the
+    // session id is storage generated (randomUUID), never caller supplied,
+    // so no caller can collide or guess another owner's session id.
+    const existing = await this.client.execute({
+      sql: `SELECT ${CHAT_SESSION_COLUMNS} FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
+      args: [agentId, ownerUserId],
+    });
+    if (existing.rows.length > 0) return chatSessionFromRow(existing.rows[0]);
+    try {
+      // ON CONFLICT DO NOTHING (no target) suppresses unique conflicts on
+      // both the id primary key and the (agent_id, owner_user_id) pair, so a
+      // concurrent create for the same pair is a no-op, never an error.
+      // foreign key violations are NOT suppressed by ON CONFLICT, so an
+      // unknown agent still surfaces as AGENT_NOT_FOUND below.
+      await this.client.execute({
+        sql: `INSERT INTO chat_sessions (id, agent_id, owner_user_id, created_at) VALUES (?, ?, ?, ?)
+              ON CONFLICT DO NOTHING`,
+        args: [randomUUID(), agentId, ownerUserId, createdAt],
+      });
+    } catch (err) {
+      // the session foreign key is the schema level guarantee that a
+      // conversation never names a nonexistent identity.
+      if (isForeignKeyViolation(err)) {
+        throw codedError("AGENT_NOT_FOUND", `cannot create chat session for unknown agent: ${agentId}`, err);
+      }
+      throw err;
+    }
+    // whichever concurrent insert won, the pair now has exactly one session;
+    // the second read is authoritative and cannot miss.
+    const row = await this.client.execute({
+      sql: `SELECT ${CHAT_SESSION_COLUMNS} FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
+      args: [agentId, ownerUserId],
+    });
+    if (row.rows.length === 0) {
+      throw new Error("chat session insert reported success but no row is readable");
+    }
+    return chatSessionFromRow(row.rows[0]);
+  }
+
+  async getChatSession(agentId: AgentId, ownerUserId: string): Promise<ChatSession | null> {
+    // pair-scoped read: a wrong owner is a miss, never a fallthrough to
+    // another owner's session (adversarial review: cross-owner access).
+    const result = await this.client.execute({
+      sql: `SELECT ${CHAT_SESSION_COLUMNS} FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
+      args: [agentId, ownerUserId],
+    });
+    return result.rows.length > 0 ? chatSessionFromRow(result.rows[0]) : null;
+  }
+
+  async appendChatMessage(message: ChatMessageRecord): Promise<void> {
+    // the insert resolves the stored session id FROM the ownership pair in
+    // the same statement, so there is no check-then-write window and no
+    // session id ever crosses this boundary: a message physically cannot
+    // land in a session the caller cannot see, even under a race
+    // (adversarial review: state injection / cross-owner access).
+    const result = await this.client.execute({
+      sql: `INSERT INTO chat_messages (session_id, role, content, tools_used, timestamp)
+            SELECT id, ?, ?, ?, ? FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
+      args: [
+        message.role,
+        message.content,
+        JSON.stringify(message.toolsUsed),
+        message.timestamp,
+        message.agentId,
+        message.ownerUserId,
+      ],
+    });
+    // zero affected rows means the pair has no session: fail closed, never a
+    // silent drop (the web layer creates the session first, so this path is
+    // a real race or a caller bug, both of which must be loud). rowsAffected
+    // is a number in libsql.
+    if (result.rowsAffected === 0) {
+      throw codedError(
+        "CHAT_SESSION_NOT_FOUND",
+        `cannot append message: no chat session for agent ${message.agentId} and owner ${message.ownerUserId}`,
+        new Error("no matching session"),
+      );
+    }
+  }
+
+  async getChatMessages(agentId: AgentId, ownerUserId: string): Promise<ChatMessage[]> {
+    // pair-scoped read joined through the session, oldest first. a missing
+    // session reads as an empty array, never an error.
+    const result = await this.client.execute({
+      sql: `SELECT ${CHAT_MESSAGE_COLUMNS}
+            FROM chat_messages m
+            JOIN chat_sessions s ON s.id = m.session_id
+            WHERE s.agent_id = ? AND s.owner_user_id = ?
+            ORDER BY m.row_id ASC`,
+      args: [agentId, ownerUserId],
+    });
+    return result.rows.map(chatMessageFromRow);
+  }
+
+  async listOwnedAgents(ownerUserId: string): Promise<AgentRecord[]> {
+    // ownership is resolved from the session key ledger at query level:
+    // listing an owner's agents is exactly "agents that owner holds a
+    // session key row for". there is no global list call and no owner
+    // parameter that could be substituted for another user's (adversarial
+    // review: idor / tenant scoping).
+    const result = await this.client.execute({
+      sql: `SELECT ${OWNED_AGENT_COLUMNS}
+            FROM session_keys sk
+            JOIN agents a ON a.public_key = sk.agent_id
+            WHERE sk.owner_user_id = ?
+            ORDER BY sk.row_id ASC`,
+      args: [ownerUserId],
+    });
+    return result.rows.map(recordFromRow);
+  }
+
+  async createUser(user: UserRecord): Promise<void> {
+    try {
+      // the users.email unique constraint is the authoritative duplicate
+      // guard: two concurrent sign-ins for the same email cannot both land,
+      // whichever insert loses surfaces DUPLICATE_EMAIL for the web layer to
+      // resolve (refetch the winner). the constraint index string is
+      // produced by the engine from the schema, never from caller data, so
+      // the message-based classifier cannot be spoofed.
+      await this.client.execute({
+        sql: `INSERT INTO users (id, email, password_hash, name, created_at) VALUES (?, ?, ?, ?, ?)`,
+        args: [user.id, user.email, user.passwordHash, user.name, user.createdAt],
+      });
+    } catch (err) {
+      if (isUniqueViolation(err, "users.email")) {
+        throw codedError("DUPLICATE_EMAIL", `user email already exists: ${user.email}`, err);
+      }
+      throw err;
+    }
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    const result = await this.client.execute({
+      sql: `SELECT ${USER_COLUMNS} FROM users WHERE email = ?`,
+      args: [email],
+    });
+    return result.rows.length > 0 ? userFromRow(result.rows[0]) : null;
+  }
+
+  async getUserById(id: string): Promise<UserRecord | null> {
+    const result = await this.client.execute({
+      sql: `SELECT ${USER_COLUMNS} FROM users WHERE id = ?`,
+      args: [id],
+    });
+    return result.rows.length > 0 ? userFromRow(result.rows[0]) : null;
+  }
+
+  async createAccountLink(link: AccountLink): Promise<void> {
+    try {
+      // the (provider, provider_account_id) unique pair is the authoritative
+      // guard: one external identity can never own two openrep accounts, and
+      // the user_id foreign key means a link can never name a missing user.
+      await this.client.execute({
+        sql: `INSERT INTO accounts (id, user_id, provider, provider_account_id, created_at) VALUES (?, ?, ?, ?, ?)`,
+        args: [link.id, link.userId, link.provider, link.providerAccountId, link.createdAt],
+      });
+    } catch (err) {
+      if (isUniqueViolation(err, "accounts.provider, accounts.provider_account_id")) {
+        throw codedError(
+          "DUPLICATE_ACCOUNT",
+          `account link already exists for provider ${link.provider}`,
+          err,
+        );
+      }
+      if (isForeignKeyViolation(err)) {
+        throw codedError("USER_NOT_FOUND", `cannot link provider ${link.provider} to unknown user ${link.userId}`, err);
+      }
+      throw err;
+    }
+  }
+
+  async getAccountLink(provider: string, providerAccountId: string): Promise<AccountLink | null> {
+    // provider-scoped read: a caller can only ever read the exact
+    // (provider, providerAccountId) pair it asked for, never a scan.
+    const result = await this.client.execute({
+      sql: `SELECT ${ACCOUNT_COLUMNS} FROM accounts WHERE provider = ? AND provider_account_id = ?`,
+      args: [provider, providerAccountId],
+    });
+    return result.rows.length > 0 ? accountLinkFromRow(result.rows[0]) : null;
+  }
+
+  async mergeOwner(fromUserId: string, toUserId: string): Promise<void> {
+    // merging an owner into itself is a guarded no-op, never an error: the
+    // auth layer's merge path can re-run idempotently after a partial
+    // failure (adversarial review: out-of-order retry after network drop).
+    if (fromUserId === toUserId) return;
+    if (fromUserId === "" || toUserId === "") {
+      throw codedError("INVALID_INPUT", "mergeOwner requires two non-empty owner ids", new Error("empty owner id"));
+    }
+    // one "write" batch IS one transaction on both engines (verified by the
+    // rotateAgent path): both owner-scoped tables move in a single commit or
+    // not at all, so a guest->account merge can never be observed half done
+    // (adversarial review: partial ownership split). the WHERE clause keeps
+    // the move scoped to exactly the source owner, so a caller can never
+    // rewrite another owner's rows.
+    await this.client.batch(
+      [
+        { sql: `UPDATE session_keys SET owner_user_id = ? WHERE owner_user_id = ?`, args: [toUserId, fromUserId] },
+        { sql: `UPDATE chat_sessions SET owner_user_id = ? WHERE owner_user_id = ?`, args: [toUserId, fromUserId] },
+      ],
+      "write",
+    );
+  }
 }
 
 function recordFromRow(row: SqlRow): AgentRecord {
@@ -764,6 +1114,28 @@ function recordFromRow(row: SqlRow): AgentRecord {
     manifestVersion: num(row, "manifestVersion"),
     signature: str(row, "signature"),
     revokedAt: nullableStr(row, "revokedAt"),
+  };
+}
+
+function userFromRow(row: SqlRow): UserRecord {
+  return {
+    id: str(row, "id"),
+    email: str(row, "email"),
+    // null means oauth-only account; the web layer refuses password
+    // attempts against a null hash, so this value must round-trip exactly.
+    passwordHash: nullableStr(row, "passwordHash"),
+    name: nullableStr(row, "name"),
+    createdAt: str(row, "createdAt"),
+  };
+}
+
+function accountLinkFromRow(row: SqlRow): AccountLink {
+  return {
+    id: str(row, "id"),
+    userId: str(row, "userId"),
+    provider: str(row, "provider"),
+    providerAccountId: str(row, "providerAccountId"),
+    createdAt: str(row, "createdAt"),
   };
 }
 

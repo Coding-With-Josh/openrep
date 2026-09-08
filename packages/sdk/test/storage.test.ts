@@ -8,7 +8,15 @@
 // valid record, and signature verification is not this layer's job.
 import { describe, expect, it } from "vitest";
 import { createSqliteStorage } from "../src/index.js";
-import type { AgentRecord, AttestationRecord, KeyRotationRecord, RegisteredSource } from "../src/index.js";
+import type {
+  AccountLink,
+  AgentRecord,
+  AttestationRecord,
+  ChatMessageRecord,
+  KeyRotationRecord,
+  RegisteredSource,
+  UserRecord,
+} from "../src/index.js";
 
 let seq = 0;
 
@@ -46,6 +54,33 @@ function makeAttestation(agentId: string, overrides: Partial<AttestationRecord> 
     signedBy: agentId,
     timestamp: "2026-01-01T00:00:00.000Z",
     schemaVersion: 1,
+    ...overrides,
+  };
+}
+
+// the account-layer fixtures are hand built like every other storage
+// fixture: persistence must work for structurally valid records, and
+// password hashing is the web layer's job, not this adapter's.
+function makeUser(overrides: Partial<UserRecord> = {}): UserRecord {
+  seq += 1;
+  return {
+    id: `user-${seq}`,
+    email: `user-${seq}@example.com`,
+    passwordHash: "scrypt:16384:8:1:salt:hash",
+    name: null,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeAccountLink(userId: string, overrides: Partial<AccountLink> = {}): AccountLink {
+  seq += 1;
+  return {
+    id: `link-${seq}`,
+    userId,
+    provider: "google",
+    providerAccountId: `sub-${seq}`,
+    createdAt: "2026-01-01T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -323,6 +358,33 @@ function makeRotation(oldPublicKey: string, newPublicKey: string): KeyRotationRe
   };
 }
 
+// chat messages are hand built like the agent and attestation fixtures: the
+// adapter only persists what it is given, the pair is set per call.
+function makeMessage(overrides: Partial<ChatMessageRecord> = {}): ChatMessageRecord {
+  seq += 1;
+  return {
+    agentId: "pk-unset",
+    ownerUserId: "owner-unset",
+    role: "user",
+    content: `message ${seq}`,
+    toolsUsed: [],
+    timestamp: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function makeSessionKey(agentId: string, ownerUserId: string) {
+  return {
+    agentId,
+    ownerUserId,
+    encryptedPrivateKey: "enc",
+    iv: "iv",
+    algorithm: "aes-256-gcm",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    expiresAtEpochMs: 9999999999999,
+  };
+}
+
 describe("sqlite storage adapter: key rotation", () => {
   it("persists the successor agent and its audit record atomically, reachable from either end of the lineage", async () => {
     const storage = createSqliteStorage(":memory:");
@@ -369,5 +431,232 @@ describe("sqlite storage adapter: key rotation", () => {
 
     const lineage = await storage.getKeyRotations(oldId.publicKey);
     expect(lineage.map((r) => r.newPublicKey)).toEqual([gen3.publicKey, gen2.publicKey]);
+  });
+});
+
+describe("sqlite storage adapter: chat history", () => {
+  it("creates one session per ownership pair, get-or-create returns the existing id", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "chatty.agent" });
+    await storage.saveAgent(agent);
+
+    const first = await storage.createChatSession(agent.publicKey, "owner-a", "2026-01-01T00:00:00.000Z");
+    expect(first.id.length).toBeGreaterThan(0);
+    expect(first.agentId).toBe(agent.publicKey);
+    expect(first.ownerUserId).toBe("owner-a");
+
+    // a second create for the same pair is a no-op returning the same row,
+    // never a second session; the schema unique pair is the guard.
+    const again = await storage.createChatSession(agent.publicKey, "owner-a", "2026-01-02T00:00:00.000Z");
+    expect(again.id).toBe(first.id);
+
+    // a different owner gets their own session for the same agent.
+    const ownerB = await storage.createChatSession(agent.publicKey, "owner-b", "2026-01-01T00:00:00.000Z");
+    expect(ownerB.id).not.toBe(first.id);
+  });
+
+  it("throws AGENT_NOT_FOUND when the session references a nonexistent agent", async () => {
+    const storage = createSqliteStorage(":memory:");
+    await expect(
+      storage.createChatSession("pk-no-such-agent", "owner-a", "2026-01-01T00:00:00.000Z"),
+    ).rejects.toMatchObject({ code: "AGENT_NOT_FOUND" });
+  });
+
+  it("persists messages oldest first and round trips tool calls", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "chat-record.agent" });
+    await storage.saveAgent(agent);
+    await storage.createChatSession(agent.publicKey, "owner-a", "2026-01-01T00:00:00.000Z");
+
+    await storage.appendChatMessage(
+      makeMessage({ agentId: agent.publicKey, ownerUserId: "owner-a", role: "user", content: "build a schema" }),
+    );
+    await storage.appendChatMessage(
+      makeMessage({
+        agentId: agent.publicKey,
+        ownerUserId: "owner-a",
+        role: "assistant",
+        content: "done",
+        toolsUsed: [{ tool: "bash", input: "ls" }],
+        timestamp: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    const messages = await storage.getChatMessages(agent.publicKey, "owner-a");
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+    expect(messages.map((m) => m.content)).toEqual(["build a schema", "done"]);
+    expect(messages[1].toolsUsed).toEqual([{ tool: "bash", input: "ls" }]);
+  });
+
+  it("appending to a pair with no session fails closed with CHAT_SESSION_NOT_FOUND", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "chatless.agent" });
+    await storage.saveAgent(agent);
+    // no createChatSession call on purpose: the write must not silently land
+    await expect(
+      storage.appendChatMessage(makeMessage({ agentId: agent.publicKey, ownerUserId: "owner-a", content: "hello" })),
+    ).rejects.toMatchObject({ code: "CHAT_SESSION_NOT_FOUND" });
+    // and nothing landed
+    expect(await storage.getChatMessages(agent.publicKey, "owner-a")).toEqual([]);
+  });
+
+  it("is pair scoped: a wrong owner never reads another owner's session or messages", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "scoped.agent" });
+    await storage.saveAgent(agent);
+    await storage.createChatSession(agent.publicKey, "owner-a", "2026-01-01T00:00:00.000Z");
+    await storage.appendChatMessage(
+      makeMessage({ agentId: agent.publicKey, ownerUserId: "owner-a", role: "user", content: "secret" }),
+    );
+
+    expect(await storage.getChatSession(agent.publicKey, "owner-b")).toBeNull();
+    expect(await storage.getChatMessages(agent.publicKey, "owner-b")).toEqual([]);
+    await expect(
+      storage.appendChatMessage(
+        makeMessage({ agentId: agent.publicKey, ownerUserId: "owner-b", role: "user", content: "trespass" }),
+      ),
+    ).rejects.toMatchObject({ code: "CHAT_SESSION_NOT_FOUND" });
+  });
+});
+
+describe("sqlite storage adapter: owned agent listing", () => {
+  it("lists exactly the agents the owner holds a session key for, oldest ownership first", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agentA = makeAgent({ name: "owned-a.agent" });
+    const agentB = makeAgent({ name: "owned-b.agent" });
+    const agentC = makeAgent({ name: "foreign.agent" });
+    await storage.saveAgent(agentA);
+    await storage.saveAgent(agentB);
+    await storage.saveAgent(agentC);
+
+    // ownership insertion order intentionally differs from agent creation
+    // order so the assertion proves the list follows ownership, not ancestry.
+    await storage.setSessionKey(makeSessionKey(agentB.publicKey, "owner-a"));
+    await storage.setSessionKey(makeSessionKey(agentA.publicKey, "owner-a"));
+    // a different owner holds a key for agentC
+    await storage.setSessionKey(makeSessionKey(agentC.publicKey, "owner-b"));
+
+    const owned = await storage.listOwnedAgents("owner-a");
+    expect(owned.map((a) => a.publicKey)).toEqual([agentB.publicKey, agentA.publicKey]);
+    // the foreign owner's agent never appears (query level scoping, not ui)
+    expect(owned.map((a) => a.name)).not.toContain("foreign.agent");
+
+    expect(await storage.listOwnedAgents("no-such-owner")).toEqual([]);
+  });
+});
+
+describe("sqlite storage adapter: users and account links", () => {
+  it("persists a user with a scrypt hash and reads it back by email and id", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const user = makeUser({ email: "alice@example.com", name: "Alice" });
+    await storage.createUser(user);
+    const byEmail = await storage.getUserByEmail("alice@example.com");
+    expect(byEmail).not.toBeNull();
+    expect(byEmail!.id).toBe(user.id);
+    expect(byEmail!.passwordHash).toBe("scrypt:16384:8:1:salt:hash");
+    expect(byEmail!.name).toBe("Alice");
+    expect(await storage.getUserById(user.id)).toEqual(byEmail);
+    // unknown reads are null, never a throw
+    expect(await storage.getUserByEmail("missing@example.com")).toBeNull();
+    expect(await storage.getUserById("no-such-user")).toBeNull();
+  });
+
+  it("round trips a null password hash for an oauth-only account", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const user = makeUser({ email: "oauth@example.com", passwordHash: null });
+    await storage.createUser(user);
+    expect((await storage.getUserByEmail("oauth@example.com"))!.passwordHash).toBeNull();
+  });
+
+  it("rejects a duplicate email with exactly code DUPLICATE_EMAIL", async () => {
+    const storage = createSqliteStorage(":memory:");
+    await storage.createUser(makeUser({ email: "dup@example.com" }));
+    await expect(storage.createUser(makeUser({ email: "dup@example.com" }))).rejects.toMatchObject({
+      code: "DUPLICATE_EMAIL",
+    });
+    // a distinct email must not trip the same constraint
+    await storage.createUser(makeUser({ email: "other@example.com" }));
+  });
+
+  it("round trips an account link by (provider, provider_account_id)", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const user = makeUser({ email: "link@example.com" });
+    await storage.createUser(user);
+    const link = makeAccountLink(user.id, { provider: "credentials", providerAccountId: user.id });
+    await storage.createAccountLink(link);
+    const readBack = await storage.getAccountLink("credentials", user.id);
+    expect(readBack).not.toBeNull();
+    expect(readBack!.userId).toBe(user.id);
+    // a different provider id is a miss, never a fallthrough
+    expect(await storage.getAccountLink("credentials", "other-sub")).toBeNull();
+    expect(await storage.getAccountLink("google", "sub-1")).toBeNull();
+  });
+
+  it("rejects a duplicate (provider, provider_account_id) with code DUPLICATE_ACCOUNT", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const first = makeUser({ email: "first@example.com" });
+    const second = makeUser({ email: "second@example.com" });
+    await storage.createUser(first);
+    await storage.createUser(second);
+    // the same google sub must never map to two accounts
+    await storage.createAccountLink(makeAccountLink(first.id, { providerAccountId: "same-sub" }));
+    await expect(
+      storage.createAccountLink(makeAccountLink(second.id, { providerAccountId: "same-sub" })),
+    ).rejects.toMatchObject({ code: "DUPLICATE_ACCOUNT" });
+  });
+
+  it("rejects an account link naming a missing user with code USER_NOT_FOUND", async () => {
+    const storage = createSqliteStorage(":memory:");
+    await expect(storage.createAccountLink(makeAccountLink("no-such-user"))).rejects.toMatchObject({
+      code: "USER_NOT_FOUND",
+    });
+  });
+});
+
+describe("sqlite storage adapter: mergeOwner", () => {
+  it("moves session keys and chat sessions between owners in one transaction", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agentA = makeAgent({ name: "merge-a.agent" });
+    const agentB = makeAgent({ name: "merge-b.agent" });
+    await storage.saveAgent(agentA);
+    await storage.saveAgent(agentB);
+
+    // source owner holds both agents; destination owner holds nothing yet
+    await storage.setSessionKey(makeSessionKey(agentA.publicKey, "guest-1"));
+    await storage.setSessionKey(makeSessionKey(agentB.publicKey, "guest-1"));
+    await storage.createChatSession(agentA.publicKey, "guest-1", "2026-01-01T00:00:00.000Z");
+
+    await storage.mergeOwner("guest-1", "account-1");
+
+    const moved = await storage.listOwnedAgents("account-1");
+    expect(moved.map((a) => a.publicKey)).toEqual([agentA.publicKey, agentB.publicKey]);
+    // the source owner now sees nothing
+    expect(await storage.listOwnedAgents("guest-1")).toEqual([]);
+    // the chat session followed the owner too
+    expect(await storage.getChatSession(agentA.publicKey, "account-1")).not.toBeNull();
+    expect(await storage.getChatSession(agentA.publicKey, "guest-1")).toBeNull();
+  });
+
+  it("is idempotent: re-running the same merge moves nothing", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "merge-idempotent.agent" });
+    await storage.saveAgent(agent);
+    await storage.setSessionKey(makeSessionKey(agent.publicKey, "guest-1"));
+    await storage.mergeOwner("guest-1", "account-1");
+    // second run: nothing left at the source, nothing broken at the target
+    await storage.mergeOwner("guest-1", "account-1");
+    expect((await storage.listOwnedAgents("account-1")).map((a) => a.publicKey)).toEqual([agent.publicKey]);
+  });
+
+  it("guards merging an owner into itself and rejects empty ids", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "merge-self.agent" });
+    await storage.saveAgent(agent);
+    await storage.setSessionKey(makeSessionKey(agent.publicKey, "same-owner"));
+    // self-merge is a no-op, never an error (retry safety after partial fail)
+    await storage.mergeOwner("same-owner", "same-owner");
+    expect((await storage.listOwnedAgents("same-owner")).map((a) => a.publicKey)).toEqual([agent.publicKey]);
+    await expect(storage.mergeOwner("", "account-1")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(storage.mergeOwner("guest-1", "")).rejects.toMatchObject({ code: "INVALID_INPUT" });
   });
 });

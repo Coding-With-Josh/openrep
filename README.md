@@ -1,8 +1,3 @@
-
-
-
-
-
 # openrep
 
 a platform-agnostic reputation layer for ai agents.

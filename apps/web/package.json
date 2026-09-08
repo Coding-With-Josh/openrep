@@ -9,10 +9,28 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "@dicebear/collection": "^9.4.3",
+    "@dicebear/core": "^9.4.3",
     "@openrep/sdk": "workspace:*",
+    "@swup/head-plugin": "^2.3.1",
+    "@swup/parallel-plugin": "^0.4.0",
+    "@swup/preload-plugin": "^3.2.12",
+    "border-beam": "^1.3.0",
+    "button": "link:@base-ui/react/button",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dither-plugin": "^1.1.1",
+    "geist": "^1.7.2",
+    "lucide-react": "^1.42.0",
+    "motion": "^13.2.0",
     "next": "16.3.4",
+    "next-auth": "5.0.0-beta.32",
     "react": "19.2.8",
-    "react-dom": "19.2.8"
+    "react-dom": "19.2.8",
+    "swup": "^4.10.0",
+    "tailwind-merge": "^3.6.0",
+    "thinking-orbs": "^0.3.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

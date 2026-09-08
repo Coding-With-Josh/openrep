@@ -1,5 +1,5 @@
 import type { Result } from "./errors";
-import { failure, ok } from "./errors";
+import { failure, ok } from "./errors.js";
 
 // which storage backend boots with. explicit discriminator field so
 // downstream code never infers the backend by checking which url field is

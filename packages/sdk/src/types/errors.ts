@@ -52,6 +52,14 @@ export type OpenRepErrorCode =
   | "INVALID_INPUT"
   | "NAME_GENERATION_EXHAUSTED"
   | "STORAGE_WRITE_FAILED"
+  // the (agent, owner) pair has no chat session on record, so a message
+  // could not be appended. distinct from AGENT_NOT_FOUND (the agent exists,
+  // the session does not) and from an empty read (a missing session reads as
+  // an empty message list, not an error), so the web layer can answer a
+  // write to a nonexistent conversation precisely instead of conflating
+  // cases. appendChatMessage throws this when the pair-scoped insert-select
+  // matched zero rows.
+  | "CHAT_SESSION_NOT_FOUND"
   | "KEY_GENERATION_FAILED"
   // the revocation request did not prove possession of the agent's owner
   // key: bad signature shape, wrong signer, or an otherwise unverifiable
@@ -101,7 +109,15 @@ export type OpenRepErrorCode =
   // inline computation, needs a different strategy" error is honest; a wrong
   // number that looks right is the worst failure mode for a reputation
   // system.
-  | "SCORE_COMPUTATION_LIMIT_EXCEEDED";
+  | "SCORE_COMPUTATION_LIMIT_EXCEEDED"
+  // the web account layer's schema constraints. a user (or an email) can
+  // exist only once, an account link only once per (provider,
+  // provider_account_id) pair, and a link can never name a missing user.
+  // storage throws these and the web auth layer resolves them (refetch on
+  // the benign duplicate, generic deny on the rest).
+  | "DUPLICATE_EMAIL"
+  | "DUPLICATE_ACCOUNT"
+  | "USER_NOT_FOUND";
 
 // a typed error value, the error half of Result<T>. plain data so it can
 // cross module and package boundaries safely. never includes secrets or
