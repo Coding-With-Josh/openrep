@@ -167,6 +167,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   content TEXT NOT NULL,
   tools_used TEXT NOT NULL,
   timestamp TEXT NOT NULL,
+  attestation_id TEXT,
   FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
 );
 
@@ -268,6 +269,53 @@ function ensureExternalVerificationSchema(db: DatabaseSync): void {
   if (!columns.some((column) => column.name === "external_verification")) {
     db.exec("ALTER TABLE attestations ADD COLUMN external_verification TEXT");
   }
+}
+
+// per-message attestation linkage: the attestation_id column on chat_messages
+// ties each assistant reply to the signed attestation its turn created. fresh
+// databases get the column from the CREATE TABLE above; pre-existing files
+// get it through the guarded ALTER pattern. nullable by design: user
+// messages and legacy rows have no attestation, and null is "no linkage",
+// never a broken reference.
+function ensureChatAttestationSchema(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(chat_messages)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "attestation_id")) {
+    db.exec("ALTER TABLE chat_messages ADD COLUMN attestation_id TEXT");
+  }
+}
+
+// retrofit for assistant messages appended before attestation_id existed:
+// they never stored a link, even though the matching attestation row was
+// persisted all along (every turn attests before the reply is appended).
+// the linkage is fully determined: same agent, identical output text, and
+// the attestation is created during wrap, strictly before the message row
+// in the same request, so the latest attestation at or before the message
+// timestamp is that turn's own record. idempotent: only NULL rows are
+// touched, later reruns are no-ops, and a real link is never overwritten.
+function backfillChatAttestationLinks(db: DatabaseSync): void {
+  db.exec(`
+    UPDATE chat_messages AS m
+    SET attestation_id = (
+      SELECT a.id
+      FROM attestations AS a
+      JOIN chat_sessions AS s ON s.id = m.session_id
+      WHERE a.agent_id = s.agent_id
+        AND a.output = m.content
+        AND datetime(a.timestamp) <= datetime(m.timestamp)
+      ORDER BY datetime(a.timestamp) DESC, a.row_id DESC
+      LIMIT 1
+    )
+    WHERE m.role = 'assistant'
+      AND m.attestation_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM attestations AS a
+        JOIN chat_sessions AS s ON s.id = m.session_id
+        WHERE a.agent_id = s.agent_id
+          AND a.output = m.content
+          AND datetime(a.timestamp) <= datetime(m.timestamp)
+      )
+  `);
 }
 
 const UNIQUE_AGENT_NAME = "agents.name";
@@ -446,6 +494,7 @@ function chatMessageFromRow(row: SqlRow): ChatMessage {
     content: str(row, "content"),
     toolsUsed: parseToolsUsed(row),
     timestamp: str(row, "timestamp"),
+    attestationId: nullableStr(row, "attestationId"),
   };
 }
 
@@ -520,7 +569,8 @@ const CHAT_MESSAGE_COLUMNS = `
   m.role,
   m.content,
   m.tools_used AS toolsUsed,
-  m.timestamp
+  m.timestamp,
+  m.attestation_id AS attestationId
 `;
 
 // the join-scoped agent read used by listOwnedAgents. every column is
@@ -924,14 +974,15 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
     // (adversarial review: state injection / cross-owner access).
     const result = this.db
       .prepare(
-        `INSERT INTO chat_messages (session_id, role, content, tools_used, timestamp)
-         SELECT id, ?, ?, ?, ? FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
+        `INSERT INTO chat_messages (session_id, role, content, tools_used, timestamp, attestation_id)
+         SELECT id, ?, ?, ?, ?, ? FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
       )
       .run(
         message.role,
         message.content,
         JSON.stringify(message.toolsUsed),
         message.timestamp,
+        message.attestationId ?? null,
         message.agentId,
         message.ownerUserId,
       );
@@ -1183,6 +1234,8 @@ export function createSqliteStorage(databasePath: string): StorageAdapter & Sess
     ensureIdempotencySchema(db);
     ensureRevocationSchema(db);
     ensureExternalVerificationSchema(db);
+    ensureChatAttestationSchema(db);
+    backfillChatAttestationLinks(db);
   } catch (err) {
     // fail loudly at construction: a database that cannot open or bootstrap
     // surfaces immediately, never lazily on the first call. the adapter

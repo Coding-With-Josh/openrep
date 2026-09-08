@@ -122,17 +122,44 @@ export const COLORS: readonly string[] = [
   "yellow",
 ];
 
-function pickWord(list: readonly string[]): string {
+function pickIndex(limit: number): number {
   // four bytes from the same csprng noble uses for keys (webcrypto backed).
   // the modulo bias for lists of length ~36 is far below any adversarial
   // relevance because names are ergonomics, not security; keys never use
   // this path.
   const bytes = etc.randomBytes(4);
-  const index = (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0;
-  return list[index % list.length];
+  const value = (bytes[0] | (bytes[1] << 8) | (bytes[2] << 16) | (bytes[3] << 24)) >>> 0;
+  return value % limit;
+}
+
+function pickWord(list: readonly string[]): string {
+  return list[pickIndex(list.length)];
 }
 
 // generates a name in the documented `adjective-noun-color.agent` shape.
 export function generateName(): string {
   return `${pickWord(ADJECTIVES)}-${pickWord(NOUNS)}-${pickWord(COLORS)}.agent`;
+}
+
+// fisher-yates over the csprng draw above, so a reroll cycle never repeats a
+// word or an exact name within the same batch. batch size is bounded by the
+// shortest word list so the without-replacement guarantee stays honest.
+export function generateNameBatch(count: number): string[] {
+  const maxBatch = Math.min(ADJECTIVES.length, NOUNS.length, COLORS.length);
+  if (!Number.isInteger(count) || count < 1 || count > maxBatch) {
+    throw new RangeError(`count must be an integer between 1 and ${maxBatch}`);
+  }
+  const adjectives = shuffle(ADJECTIVES).slice(0, count);
+  const nouns = shuffle(NOUNS).slice(0, count);
+  const colors = shuffle(COLORS).slice(0, count);
+  return adjectives.map((adjective, i) => `${adjective}-${nouns[i]}-${colors[i]}.agent`);
+}
+
+function shuffle(list: readonly string[]): string[] {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = pickIndex(i + 1);
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
 }

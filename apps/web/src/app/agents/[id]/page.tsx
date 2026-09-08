@@ -1,14 +1,16 @@
 "use client";
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, ArrowUp, Lock } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, Copy, Lock, RefreshCw } from "lucide-react";
 import { ThinkingOrb } from "thinking-orbs";
+import { motion } from "motion/react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
 import { BorderBeamButton } from "@/components/ui/border-beam-button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { CopyButton } from "@/components/ui/copy-button";
 import AgentAvatar from "@/components/ui/agent-avatar";
+import { Markdown } from "@/components/ui/markdown";
 import { useGuestSession } from "@/lib/session";
 import { cachedFetch, useCachedData } from "@/lib/client-cache";
 
@@ -18,7 +20,52 @@ type ChatMessage = {
   content: string;
   toolsUsed: ToolCall[];
   timestamp: string;
+  attestationId?: string | null;
 };
+
+// strip markdown so copying an ai reply pastes clean prose, not syntax:
+// fences, backticks, bold/italic markers, headings, blockquotes, link
+// destinations, and gfm table pipes are removed, text content kept.
+const plainTextFromMarkdown = (src: string): string =>
+  src
+    .replace(/```[a-zA-Z0-9_-]*\s*\n?/g, "")
+    .replace(/`/g, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1$2")
+    .replace(/(^|[^_])_([^_\n]+)_/g, "$1$2")
+    .replace(/!\[([^\]]*)\]\(([^)]+)\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1 ($2)")
+    .replace(/^#{1,6}\s+/gm, "")
+    .replace(/^\s*>\s?/gm, "")
+    .replace(/^\s*[*+]\s+/gm, "- ")
+    .replace(/^[\s|:\-]{2,}$/gm, "")
+    .replace(/^\|/gm, "")
+    .replace(/\s*\|\s*/g, " | ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+const actionButton =
+  "flex items-center justify-center size-7 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-all duration-200";
+
+// one icon-sized action per message: copy for both roles, retry for agents.
+function MessageActionCopy({ value, label }: { value: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <button type="button" onClick={handleCopy} aria-label={label} title={label} className={actionButton}>
+      {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+    </button>
+  );
+}
 type AgentScore = {
   agentId: string;
   composite: number;
@@ -43,6 +90,14 @@ type ApiError = { error?: { code?: string; message?: string } };
 const toolLine = (tools: ToolCall[]) =>
   tools.map((t) => `tool: ${t.tool}`).join(" · ");
 
+// a smooth entry for freshly added bubbles; history rendered from the cache
+// mounts without animation so reloads do not replay every row.
+const bubbleMotion = {
+  initial: { opacity: 0, y: 10, scale: 0.98 },
+  animate: { opacity: 1, y: 0, scale: 1 },
+  transition: { type: "spring" as const, stiffness: 400, damping: 30 },
+};
+
 export default function ChatInterface() {
   const params = useParams<{ id: string }>();
   const id = params.id;
@@ -53,9 +108,12 @@ export default function ChatInterface() {
   const [name, setName] = useState<string | null>(queryName ?? null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState("");
-  const [lastAttestationId, setLastAttestationId] = useState<string | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<ChatMessage | null>(null);
+  const [sendSeq, setSendSeq] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const firstScrollRef = useRef(true);
+  const prevGeneratingRef = useRef(false);
 
   const transcriptKey = sessionReady && guest !== null && id !== undefined
     ? `chat:${guest.userId}:${id}`
@@ -69,9 +127,28 @@ export default function ChatInterface() {
     error: transcriptError,
     locked: transcriptLocked,
     commit: commitTranscript,
+    lock: lockTranscript,
   } = useCachedData<{ agentId: string; messages: ChatMessage[] }>(
     transcriptKey,
     () => cachedFetch<{ agentId: string; messages: ChatMessage[] }>(`/api/agents/${encodeURIComponent(id ?? "")}/chat`),
+    // a mount-time transcript GET can resolve after the chat POST committed
+    // the fresher full transcript (groq takes seconds); length is monotonic
+    // for one agent, so never regress to a shorter list.
+    {
+      // length is monotonic for one agent, so never regress to a shorter
+      // list even when a slow mount-time GET resolves after a chat POST.
+      merge: (prev, fresh) => {
+        if (prev.messages.length !== fresh.messages.length) {
+          return prev.messages.length >= fresh.messages.length ? prev : fresh;
+        }
+        // equal length: prefer the copy carrying more attestation links, so
+        // a cached transcript from before the per-message attestation
+        // backfill cannot hold the footers hostage.
+        const linked = (msgs: ChatMessage[]) =>
+          msgs.filter((m) => m.attestationId !== null && m.attestationId !== undefined).length;
+        return linked(fresh.messages) >= linked(prev.messages) ? fresh : prev;
+      },
+    },
   );
 
   const {
@@ -81,6 +158,12 @@ export default function ChatInterface() {
   } = useCachedData<{ manifest?: { name: string }; score?: AgentScore }>(
     scoreKey,
     () => cachedFetch<{ manifest?: { name: string }; score?: AgentScore }>(`/api/agents/${encodeURIComponent(id ?? "")}/score`),
+    // composite only ever grows (attestations are append-only), so a stale
+    // score GET resolving late must not regress the chip after a chat POST.
+    {
+      merge: (prev, fresh) =>
+        (fresh.score?.composite ?? 0) >= (prev.score?.composite ?? 0) ? fresh : prev,
+    },
   );
 
   const locked = transcriptLocked;
@@ -93,21 +176,56 @@ export default function ChatInterface() {
     }
   }, [scoreData, name]);
 
-  const scrollToBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
+  const searchOrb = (size: 64 | 20) => (
+    <ThinkingOrb state="searching" size={size} theme="light" />
+  );
+
+  // optimistic display list: server transcript plus the in-flight user bubble.
+  const messages = transcriptData?.messages ?? null;
+  const displayedMessages: ChatMessage[] =
+    pendingMessage === null ? (messages ?? []) : [...(messages ?? []), pendingMessage];
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
+    bottomRef.current?.scrollIntoView({ behavior, block: "end" });
   }, []);
+
+  // first data paint (cache or fresh fetch): land at the bottom once, so the
+  // transcript does not replay a long scroll while the user watches.
   useEffect(() => {
-    scrollToBottom();
-  }, [transcriptData, isGenerating, scrollToBottom]);
+    if (messages !== null && firstScrollRef.current) {
+      firstScrollRef.current = false;
+      scrollToBottom("auto");
+    }
+  }, [messages, scrollToBottom]);
+
+  // on send, glide to your own bubble and the orb. on reply arrival, do
+  // nothing on purpose: the answer replaces the orb in place, so the top of
+  // the reply lands where the user already is instead of yanking the
+  // viewport to the end of a long answer.
+  useEffect(() => {
+    if (isGenerating && !prevGeneratingRef.current) {
+      scrollToBottom("smooth");
+    }
+    prevGeneratingRef.current = isGenerating;
+  }, [isGenerating, scrollToBottom]);
 
   const hasText = message.trim().length > 0;
 
-  const handleSend = async () => {
-    const text = message.trim();
-    if (!hasText || locked || isGenerating || id === undefined) return;
+  const runTurn = async (text: string) => {
+    if (locked || isGenerating || id === undefined || messages === null) return;
     setMessage("");
     setSendError(null);
+    // optimistic bubble: your message is visible instantly while the agent
+    // runs. it is client-only until the POST returns the authoritative
+    // transcript, which then replaces it (same position, server-persisted).
+    setPendingMessage({
+      role: "user",
+      content: text,
+      toolsUsed: [],
+      timestamp: new Date().toISOString(),
+      attestationId: null,
+    });
+    setSendSeq((n) => n + 1);
     setIsGenerating(true);
     try {
       const res = await fetch(`/api/agents/${encodeURIComponent(id)}/chat`, {
@@ -125,13 +243,19 @@ export default function ChatInterface() {
         | ApiError = await res.json();
       if (!res.ok) {
         if (res.status === 403) {
-          setLocked(true);
+          // the session key is gone (expired or never held): purge the cached
+          // transcript and lock the composer, fail closed to the locked state.
+          lockTranscript();
           setSendError("this agent's session expired, create a new agent to continue");
         } else {
           setSendError(
             (body as ApiError).error?.message ?? "the agent could not run, try again",
           );
         }
+        // the message never landed on the ledger: drop the optimistic bubble
+        // and put the text back so nothing is silently lost.
+        setPendingMessage(null);
+        setMessage(text);
         return;
       }
       const okBody = body as {
@@ -142,12 +266,29 @@ export default function ChatInterface() {
       };
       commitTranscript({ agentId: id, messages: okBody.chatSession.messages });
       commitScore({ manifest: { name: `${(name ?? id.slice(0, 8))}.agent` }, score: okBody.score });
-      setLastAttestationId(okBody.attestation.id);
+      setPendingMessage(null);
     } catch {
+      setPendingMessage(null);
+      setMessage(text);
       setSendError("could not reach the server, check your connection");
     } finally {
       setIsGenerating(false);
     }
+  };
+
+  const handleSend = async () => {
+    const text = message.trim();
+    if (!hasText) return;
+    await runTurn(text);
+  };
+
+  // retry replays the user prompt that preceded the answer as a brand new
+  // turn: the ledger is append-only (attestations are permanent signed
+  // records and the score is composite over them), so the old exchange stays
+  // visible with its own attestation and a fresh exchange is appended.
+  const handleRetry = async (userPrompt: string) => {
+    if (locked || isGenerating || messages === null) return;
+    await runTurn(userPrompt);
   };
 
   const displayName = name ?? (id !== undefined ? id.slice(0, 8) : "agent");
@@ -155,12 +296,10 @@ export default function ChatInterface() {
     ? `+${scoreData.score.composite.toFixed(2)}`
     : "+0.00";
 
-  const messages = transcriptData?.messages ?? null;
-
   return (
-    <div className="h-screen bg-white flex flex-col items-center font-sans relative overflow-hidden">
-      {/* Header Bar */}
-      <header className="flex items-center gap-4 w-full px-4 py-3 z-20">
+    <div className="h-screen bg-white flex flex-col font-sans relative overflow-hidden">
+      {/* Header Bar — fixed height, never squeezed by the transcript */}
+      <header className="flex items-center gap-4 w-full max-w-5xl mx-auto shrink-0 px-4 py-3 z-20">
         <Link
           href="/agents"
           className="p-2 rounded-full hover text-neutral-600 hover:text-neutral-800 transition-all duration-200 hover:scale-102 active:scale-98"
@@ -170,7 +309,7 @@ export default function ChatInterface() {
 
         <div className="flex-1 flex items-center gap-3 min-w-0">
           <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden">
-            <AgentAvatar name={displayName} className="w-full h-full" />
+            <AgentAvatar name={displayName} seed={id} className="w-full h-full" />
           </div>
           <div className="flex flex-col items-start gap-0.5 min-w-0">
             <h1 className="text-sm font-medium tracking-tight text-neutral-900 truncate">
@@ -216,113 +355,170 @@ export default function ChatInterface() {
         </Link>
       </header>
 
-      {/* Transcript */}
-      <div className="relative w-full max-w-3xl flex flex-col gap-4 z-10 h-[80vh] p-4 mt-6">
-        <ScrollArea className="flex-1 min-h-0">
-          <div ref={scrollRef} className="flex flex-col gap-3 py-4 pr-3 min-h-full">
-            {loadError ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-6 gap-3">
-                <p className="text-sm font-medium text-rose-600">{loadError}</p>
-                <Link
-                  href="/agents"
-                  className="text-xs text-neutral-500 hover:text-neutral-700 transition-colors"
-                >
-                  back to your agents
-                </Link>
-              </div>
-            ) : messages === null && !locked ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
-                <div className="flex items-center gap-2 text-sm text-neutral-500">
-                  <ThinkingOrb state="searching" size={64} theme="light" color="black" />
-                  {/* loading transcript */}
-                </div>
-              </div>
-            ) : locked ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-6 gap-3">
-                <p className="text-sm font-medium text-neutral-700">
-                  this agent's signing key expired after inactivity
-                </p>
-                <p className="text-xs text-neutral-500">
-                  create a new agent to continue.
-                </p>
-                <Link
-                  href="/agents/new"
-                  className="text-xs font-medium text-neutral-900 hover:underline mt-1"
-                >
-                  create a new agent
-                </Link>
-              </div>
-            ) : messages !== null && messages.length === 0 ? (
-              <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
-                <p className="text-sm font-medium text-neutral-700">
-                  say hello to get started
-                </p>
-                <p className="text-xs text-neutral-500 mt-1">
-                  your first message becomes this agent's first attestation
-                </p>
-              </div>
-            ) : (
-              messages !== null &&
-              messages.map((msg, idx) =>
-                msg.role === "agent" ? (
-                  <div
-                    key={idx}
-                    className="flex flex-col items-start gap-1"
+      {/* Transcript — this is the scroll view; flex-1 min-h-0 makes it take
+          exactly the leftover space and scroll internally, so the composer
+          below never moves or gets pushed around. */}
+      <div className="relative w-full flex-1 min-h-0 flex justify-center z-10">
+        <div className="w-full max-w-3xl flex flex-col h-full p-4">
+          <ScrollArea className="flex-1 min-h-0">
+            <div className="flex flex-col gap-3 py-4 pr-3 min-h-full">
+              {loadError ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center py-6 gap-3">
+                  <p className="text-sm font-medium text-rose-600">{loadError}</p>
+                  <Link
+                    href="/agents"
+                    className="text-xs text-neutral-500 hover:text-neutral-700 transition-colors"
                   >
-                    <div className="max-w-[85%] bg-neutral-100 rounded-2xl tracking-[-0.018em] px-4 py-3 text-sm text-neutral-800 whitespace-pre-wrap">
-                      {msg.content}
+                    back to your agents
+                  </Link>
+                </div>
+              ) : displayedMessages.length === 0 && !locked ? (
+                messages === null ? (
+                  <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
+                    <div className="flex items-center gap-2 text-sm text-neutral-500">
+                      {searchOrb(20)}
+                      loading transcript
                     </div>
-                    {msg.toolsUsed.length > 0 && (
-                      <div className="flex items-center gap-2 px-2">
-                        <span className="flex items-center gap-1.5 text-xs text-neutral-500">
-                          {toolLine(msg.toolsUsed)}
-                        </span>
-                      </div>
-                    )}
-                    {idx === messages.length - 1 && lastAttestationId !== null && (
-                      <div className="flex items-center pl-2 pr-1">
-                        <CopyButton
-                          value={lastAttestationId}
-                          label="Copy attestation id"
-                          className="text-[10px]"
-                        >
-                          <span className="font-mono">
-                            attestation: {lastAttestationId.slice(0, 6)}...
-                            {lastAttestationId.slice(-4)}
-                          </span>
-                        </CopyButton>
-                      </div>
-                    )}
                   </div>
                 ) : (
-                  <div key={idx} className="flex justify-end">
-                    <div className="max-w-[85%] bg-neutral-900 rounded-2xl tracking-[-0.016em] px-4 py-3 text-sm text-white whitespace-pre-wrap">
-                      {msg.content}
-                    </div>
+                  <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
+                    <p className="text-sm font-medium text-neutral-700">
+                      say hello to get started
+                    </p>
+                    <p className="text-xs text-neutral-500 mt-1">
+                      your first message becomes this agent's first attestation
+                    </p>
                   </div>
-                ),
-              )
-            )}
+                )
+              ) : locked ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center py-6 gap-3">
+                  <p className="text-sm font-medium text-neutral-700">
+                    this agent's signing key expired after inactivity
+                  </p>
+                  <p className="text-xs text-neutral-500">
+                    create a new agent to continue.
+                  </p>
+                  <Link
+                    href="/agents/new"
+                    className="text-xs font-medium text-neutral-900 hover:underline mt-1"
+                  >
+                    create a new agent
+                  </Link>
+                </div>
+              ) : (
+                displayedMessages.map((msg, idx) => {
+                  // animate only the newest bubble (the fresh reply or the
+                  // optimistic user bubble); history is static.
+                  const isNew =
+                    (pendingMessage !== null && idx === displayedMessages.length - 1) ||
+                    (pendingMessage === null && idx === displayedMessages.length - 1 && msg.role === "agent");
+                  const key =
+                    pendingMessage !== null && idx === displayedMessages.length - 1
+                      ? `pending-${sendSeq}`
+                      : idx;
+                  return msg.role === "agent" ? (
+                    <motion.div
+                      key={key}
+                      {...(isNew ? bubbleMotion : { initial: false })}
+                      className="group flex items-start gap-1.5 max-w-[85%]"
+                    >
+                      <div className="min-w-0 flex flex-col items-start gap-1">
+                        <div className="rounded-2xl tracking-[-0.018em] px-4 py-3 text-sm text-neutral-800 wrap-break-words">
+                          <Markdown content={msg.content} />
+                        </div>
+                        {msg.toolsUsed.length > 0 && (
+                          <div className="flex items-center gap-2 px-2">
+                            <span className="flex items-center gap-1.5 text-xs text-neutral-500">
+                              {toolLine(msg.toolsUsed)}
+                            </span>
+                          </div>
+                        )}
+                        {msg.attestationId !== null && msg.attestationId !== undefined && (
+                          <div className="flex items-center pl-2 pr-1">
+                            <CopyButton
+                              value={msg.attestationId}
+                              label="Copy attestation id"
+                              className="text-[10px]"
+                            >
+                              <span className="font-mono">
+                                attestation: {msg.attestationId.slice(0, 6)}...
+                                {msg.attestationId.slice(-4)}
+                              </span>
+                            </CopyButton>
+                          </div>
+                        )}
+                      </div>
+                      {!locked && (
+                        <div className="flex flex-col gap-1 pt-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                          <MessageActionCopy
+                            value={plainTextFromMarkdown(msg.content)}
+                            label="Copy message text"
+                          />
+                          {idx > 0 && displayedMessages[idx - 1].role === "user" && (
+                            <button
+                              type="button"
+                              onClick={() => void handleRetry(displayedMessages[idx - 1].content)}
+                              disabled={isGenerating}
+                              aria-label="Retry this answer"
+                              title="Retry this answer"
+                              className={`${actionButton} ${isGenerating ? "opacity-40 cursor-not-allowed" : ""}`}
+                            >
+                              <RefreshCw className="size-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      )}
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key={key}
+                      {...(isNew ? bubbleMotion : { initial: false })}
+                      className="group flex items-start justify-end gap-1.5"
+                    >
+                      {!locked && (
+                        <div className="flex flex-col gap-1 pt-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
+                          <MessageActionCopy value={msg.content} label="Copy message text" />
+                        </div>
+                      )}
+                      <div className="max-w-[85%] bg-neutral-900 rounded-3xl tracking-[-0.016em] px-4 py-3 text-sm text-white whitespace-pre-wrap">
+                        {msg.content}
+                      </div>
+                    </motion.div>
+                  );
+                })
+              )}
 
-            {!locked && isGenerating && (
-              <div className="flex items-start w-fit justify-center gap-1 bg-black/5 rounded-full px-4 py-2 text-sm text-neutral-800 tracking-tight">
-                <ThinkingOrb state="searching" size={20} theme="light" />
-                <h1 className="font-medium">thinking</h1>
-              </div>
-            )}
+              {!locked && isGenerating && (
+                <div className="flex items-start w-fit justify-center gap-1 bg-black/5 rounded-full px-4 py-2 text-sm text-neutral-800 tracking-tight">
+                  {searchOrb(20)}
+                </div>
+              )}
 
-            {sendError && (
-              <div className="flex justify-center px-2">
-                <p className="text-xs text-rose-600 font-medium">{sendError}</p>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
+              {sendError && (
+                <div className="flex flex-col items-center gap-1.5 px-2">
+                  <p className="text-xs text-rose-600 font-medium">{sendError}</p>
+                  {pendingMessage === null && message.trim().length > 0 && (
+                    <button
+                      onClick={() => void handleSend()}
+                      className="text-[11px] font-medium text-neutral-600 hover:text-neutral-900 transition-colors"
+                    >
+                      retry send
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {/* bottom sentinel drives the scroll-into-view */}
+              <div ref={bottomRef} />
+            </div>
+          </ScrollArea>
+        </div>
       </div>
 
-      {/* Composer */}
-      <div className="flex flex-col items-center justify-center max-w-full gap-4 scale-92 mb-6">
-        <div className="w-4xl bg-white rounded-3xl shadow-xs border border-neutral-200 p-5 min-h-35 flex flex-col relative z-20 transition-all duration-200">
+      {/* Composer — shrink-0 keeps it pinned; it never shares scroll with the
+          transcript above. */}
+      <div className="w-full flex flex-col items-center gap-3 shrink-0 px-4 pb-4 pt-2">
+        <div className="w-full max-w-3xl bg-white rounded-3xl shadow-xs border border-neutral-200 p-5 flex flex-col relative z-20 transition-all duration-200">
           <textarea
             disabled={locked || isGenerating || loadError !== null}
             value={message}
@@ -359,9 +555,9 @@ export default function ChatInterface() {
               {!isGenerating && !locked ? (
                 <button
                   onClick={() => void handleSend()}
-                  disabled={!hasText}
+                  disabled={!hasText || messages === null}
                   className={`p-2 rounded-full transition-all duration-300 ease-out ${
-                    hasText
+                    hasText && messages !== null
                       ? "bg-neutral-900 text-white hover:scale-102 active:scale-98"
                       : "text-neutral-600 hover:bg-neutral-100"
                   }`}

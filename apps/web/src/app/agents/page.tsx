@@ -161,7 +161,7 @@ const Page = () => {
                   >
                     <div className="relative shrink-0">
                       <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden">
-                        <AgentAvatar name={name} className="w-full h-full" />
+                        <AgentAvatar name={name} seed={id} className="w-full h-full" />
                       </div>
                       <span
                         className={`absolute bottom-0 right-0 size-3 border-2 border-white rounded-full ${

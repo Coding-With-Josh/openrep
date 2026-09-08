@@ -11,7 +11,7 @@ import {
   createProviderClient,
 } from "../src/index.js";
 import type { ProviderMessage } from "../src/index.js";
-import { geminiConfigFixture, openAiCompatibleConfigFixture, sampleConfigFixture } from "./fixtures.js";
+import { geminiConfigFixture, openAiCompatibleConfigFixture, openAiConfigFixture, sampleConfigFixture } from "./fixtures.js";
 
 const abortController = new AbortController();
 
@@ -416,6 +416,99 @@ describe("createProviderClient factory", () => {
       openAiCompatibleConfigFixture,
     );
     expect(fetchMock.mock.calls[0][0]).toBe("https://api.deepseek.com/v1/chat/completions");
+    vi.unstubAllGlobals();
+  });
+});
+
+describe("system prompt support", () => {
+  const SYSTEM = "never mention tools in your answer";
+
+  it("openai sends the system instruction as the first role:system message", async () => {
+    const fetchMock = stubCapturingFetch({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    });
+    const client = new OpenAiClient("sk-open-test");
+    await client.complete(
+      [{ role: "user", content: "hi" }],
+      abortController.signal,
+      { ...openAiConfigFixture, system: SYSTEM },
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sent = JSON.parse((init as { body: string }).body);
+    expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM });
+    expect(sent.messages[1]).toEqual({ role: "user", content: "hi" });
+    vi.unstubAllGlobals();
+  });
+
+  it("openai-compatible sends the system instruction first", async () => {
+    const fetchMock = stubCapturingFetch({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    });
+    const client = new OpenAiCompatibleClient("sk-comp-test", "https://compat.example/v1");
+    await client.complete(
+      [{ role: "user", content: "hi" }],
+      abortController.signal,
+      { ...openAiCompatibleConfigFixture, system: SYSTEM },
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sent = JSON.parse((init as { body: string }).body);
+    expect(sent.messages[0]).toEqual({ role: "system", content: SYSTEM });
+    vi.unstubAllGlobals();
+  });
+
+  it("anthropic puts the system instruction in the top-level system field, never in messages", async () => {
+    const fetchMock = stubCapturingFetch({
+      content: [{ type: "text", text: "ok" }],
+    });
+    const client = new AnthropicClient("sk-ant-test");
+    await client.complete(
+      [{ role: "user", content: "hi" }],
+      abortController.signal,
+      { ...sampleConfigFixture, system: SYSTEM },
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sent = JSON.parse((init as { body: string }).body);
+    expect(sent.system).toBe(SYSTEM);
+    expect(sent.messages).toEqual([{ role: "user", content: "hi" }]);
+    vi.unstubAllGlobals();
+  });
+
+  it("gemini puts the system instruction in systemInstruction.parts, never in contents", async () => {
+    const fetchMock = stubCapturingFetch({
+      candidates: [{ content: { parts: [{ text: "ok" }] } }],
+    });
+    const client = new GeminiClient("sk-gem-test");
+    await client.complete(
+      [{ role: "user", content: "hi" }],
+      abortController.signal,
+      { ...geminiConfigFixture, system: SYSTEM },
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sent = JSON.parse((init as { body: string }).body);
+    expect(sent.systemInstruction).toEqual({ parts: [{ text: SYSTEM }] });
+    expect(sent.contents).toEqual([{ role: "user", parts: [{ text: "hi" }] }]);
+    vi.unstubAllGlobals();
+  });
+
+  it("no system field leaves the request body unchanged", async () => {
+    const fetchMock = stubCapturingFetch({
+      choices: [{ message: { role: "assistant", content: "ok" } }],
+    });
+    const client = new OpenAiClient("sk-open-test");
+    await client.complete(
+      [{ role: "user", content: "hi" }],
+      abortController.signal,
+      openAiConfigFixture,
+    );
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sent = JSON.parse((init as { body: string }).body);
+    expect(sent.messages).toEqual([{ role: "user", content: "hi" }]);
+    expect(sent).not.toHaveProperty("system");
     vi.unstubAllGlobals();
   });
 });

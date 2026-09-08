@@ -23,3 +23,8 @@ body {
     color: #ededed;
   }
 }
+
+.prose :where(pre, code) {
+  all: unset;
+}
+

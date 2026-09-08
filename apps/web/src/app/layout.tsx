@@ -13,6 +13,7 @@ import localFont from "next/font/local";
 import "./globals.css";
 import Menu from "@/components/ui/menu-button";
 import { SessionProvider } from "@/components/auth/session-provider";
+import { ThemeProvider } from "next-themes";
 
 export const metadata: Metadata = {
   title: "openrep - represent and repute",
@@ -53,8 +54,10 @@ export default function RootLayout({
     `}
     >
       <body className="font-sans">
+        <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
         <SessionProvider>{children}</SessionProvider>
         <Menu />
+        </ThemeProvider>
       </body>
     </html>
   );

@@ -43,12 +43,14 @@ export type ChatRole = "user" | "assistant";
 // a single persisted chat message. role is the sender side, content the
 // literal text, toolsUsed the tool calls that accompanied this message
 // (empty when the turn was pure text), timestamp the iso 8601 utc record
-// time.
+// time. attestationId links an assistant message to the signed attestation
+// its turn produced; user messages and legacy rows carry null.
 export interface ChatMessage {
   role: ChatRole;
   content: string;
   toolsUsed: ToolCall[];
   timestamp: string;
+  attestationId?: string | null;
 }
 
 // a chat message with the ownership pair attached, the shape append paths

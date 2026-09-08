@@ -189,6 +189,7 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   content TEXT NOT NULL,
   tools_used TEXT NOT NULL,
   timestamp TEXT NOT NULL,
+  attestation_id TEXT,
   FOREIGN KEY (session_id) REFERENCES chat_sessions(id)
 );`,
   // message reads join on session_id and order by row_id; sqlite does not
@@ -265,6 +266,46 @@ async function ensureExternalVerificationSchema(client: Client): Promise<void> {
   }
 }
 
+// per-message attestation linkage, identical to sqlite.ts: the guarded
+// ALTER keeps pre-existing chat_messages tables working, nullable by
+// design because user messages and legacy rows have no attestation.
+async function ensureChatAttestationSchema(client: Client): Promise<void> {
+  const columns = await tableColumns(client, "chat_messages");
+  if (!columns.includes("attestation_id")) {
+    await client.execute("ALTER TABLE chat_messages ADD COLUMN attestation_id TEXT");
+  }
+}
+
+// retrofit for assistant messages appended before attestation_id existed,
+// same join and rationale as sqlite.ts: same agent, identical output, and
+// the latest attestation at or before the message timestamp is the turn's
+// own record. idempotent: only NULL rows are touched, reruns are no-ops.
+async function backfillChatAttestationLinks(client: Client): Promise<void> {
+  await client.execute(`
+    UPDATE chat_messages AS m
+    SET attestation_id = (
+      SELECT a.id
+      FROM attestations AS a
+      JOIN chat_sessions AS s ON s.id = m.session_id
+      WHERE a.agent_id = s.agent_id
+        AND a.output = m.content
+        AND datetime(a.timestamp) <= datetime(m.timestamp)
+      ORDER BY datetime(a.timestamp) DESC, a.row_id DESC
+      LIMIT 1
+    )
+    WHERE m.role = 'assistant'
+      AND m.attestation_id IS NULL
+      AND EXISTS (
+        SELECT 1
+        FROM attestations AS a
+        JOIN chat_sessions AS s ON s.id = m.session_id
+        WHERE a.agent_id = s.agent_id
+          AND a.output = m.content
+          AND datetime(a.timestamp) <= datetime(m.timestamp)
+      )
+  `);
+}
+
 // one shared bootstrap so createLibsqlStorage cannot forget a guard.
 async function bootstrap(client: Client, url: string): Promise<void> {
   try {
@@ -303,6 +344,8 @@ async function bootstrap(client: Client, url: string): Promise<void> {
     await ensureIdempotencySchema(client);
     await ensureRevocationSchema(client);
     await ensureExternalVerificationSchema(client);
+    await ensureChatAttestationSchema(client);
+    await backfillChatAttestationLinks(client);
   } catch (err) {
     // fail loudly at construction, exactly like sqlite.ts: a database that
     // cannot bootstrap surfaces immediately, never lazily on first use,
@@ -507,6 +550,7 @@ function chatMessageFromRow(row: SqlRow): ChatMessage {
     content: str(row, "content"),
     toolsUsed: parseToolsUsed(row),
     timestamp: str(row, "timestamp"),
+    attestationId: nullableStr(row, "attestationId"),
   };
 }
 
@@ -577,7 +621,8 @@ const CHAT_MESSAGE_COLUMNS = `
   m.role,
   m.content,
   m.tools_used AS toolsUsed,
-  m.timestamp
+  m.timestamp,
+  m.attestation_id AS attestationId
 `;
 
 // the join-scoped agent read used by listOwnedAgents. every column is
@@ -953,13 +998,14 @@ export class LibsqlStorageAdapter implements StorageAdapter, SessionKeyBackend {
     // land in a session the caller cannot see, even under a race
     // (adversarial review: state injection / cross-owner access).
     const result = await this.client.execute({
-      sql: `INSERT INTO chat_messages (session_id, role, content, tools_used, timestamp)
-            SELECT id, ?, ?, ?, ? FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
+      sql: `INSERT INTO chat_messages (session_id, role, content, tools_used, timestamp, attestation_id)
+            SELECT id, ?, ?, ?, ?, ? FROM chat_sessions WHERE agent_id = ? AND owner_user_id = ?`,
       args: [
         message.role,
         message.content,
         JSON.stringify(message.toolsUsed),
         message.timestamp,
+        message.attestationId ?? null,
         message.agentId,
         message.ownerUserId,
       ],

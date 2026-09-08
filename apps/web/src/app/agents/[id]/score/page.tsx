@@ -1,13 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, BadgeCheck, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
+import { ThinkingOrb } from "thinking-orbs";
 import { BorderBeamButton } from "@/components/ui/border-beam-button";
 import { CopyButton } from "@/components/ui/copy-button";
 import AgentAvatar from "@/components/ui/agent-avatar";
 import { useGuestSession } from "@/lib/session";
+import { cachedFetch, useCachedData } from "@/lib/client-cache";
 
 type ToolCall = { tool: string; input?: unknown; output?: unknown };
 type AgentScore = {
@@ -39,7 +40,14 @@ type Attestation = {
   timestamp: string;
   schemaVersion: number;
 };
-type ApiError = { error?: { code?: string; message?: string } };
+type ScoreBody = {
+  manifest: AgentManifest;
+  manifestVerdict: { valid: boolean; reason: string };
+  score: AgentScore;
+  attestations: { attestation: Attestation; verdict: { valid: boolean; reason: string } }[];
+  verifiedCount: number;
+  totalCount: number;
+};
 
 const shortId = (id: string) => `${id.slice(0, 4)}...${id.slice(-4)}`;
 
@@ -51,65 +59,28 @@ const Page = () => {
   // fallback and still drives the ledger and verification state.
   const searchParams = useSearchParams();
   const queryName = searchParams.get("name");
-  const { ready: sessionReady } = useGuestSession();
+  const { ready: sessionReady, session: guest } = useGuestSession();
 
-  const [manifest, setManifest] = useState<AgentManifest | null>(null);
-  const [manifestValid, setManifestValid] = useState<boolean | null>(null);
-  const [score, setScore] = useState<AgentScore | null>(null);
-  const [attestations, setAttestations] = useState<
-    { attestation: Attestation; verdict: { valid: boolean; reason: string } }[] | null
-  >(null);
-  const [verifiedCount, setVerifiedCount] = useState(0);
-  const [totalCount, setTotalCount] = useState(0);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // the score card is keyed by the server-confirmed session userId so a
+  // reload paints the cached copy instantly and revalidates in the background.
+  const cacheKey = sessionReady && guest !== null && id !== undefined
+    ? `scorecard:${guest.userId}:${id}`
+    : null;
+  const {
+    data: body,
+    error: loadError,
+    reload,
+  } = useCachedData<ScoreBody>(
+    cacheKey,
+    () => cachedFetch<ScoreBody>(`/api/agents/${encodeURIComponent(id ?? "")}/score`),
+  );
 
-  useEffect(() => {
-    if (!sessionReady || id === undefined) return;
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch(`/api/agents/${encodeURIComponent(id)}/score`);
-        const body: {
-          manifest: AgentManifest;
-          manifestVerdict: { valid: boolean; reason: string };
-          score: AgentScore;
-          attestations: { attestation: Attestation; verdict: { valid: boolean; reason: string } }[];
-          verifiedCount: number;
-          totalCount: number;
-        } | ApiError = await res.json();
-        if (!res.ok) {
-          if (!cancelled) {
-            setLoadError(
-              (body as ApiError).error?.message ?? "could not load this score",
-            );
-          }
-          return;
-        }
-        const ok = body as {
-          manifest: AgentManifest;
-          manifestVerdict: { valid: boolean; reason: string };
-          score: AgentScore;
-          attestations: { attestation: Attestation; verdict: { valid: boolean; reason: string } }[];
-          verifiedCount: number;
-          totalCount: number;
-        };
-        if (!cancelled) {
-          setManifest(ok.manifest);
-          setManifestValid(ok.manifestVerdict.valid);
-          setScore(ok.score);
-          setAttestations(ok.attestations);
-          setVerifiedCount(ok.verifiedCount);
-          setTotalCount(ok.totalCount);
-        }
-      } catch {
-        if (!cancelled) setLoadError("could not reach the server, check your connection");
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [sessionReady, id]);
+  const manifest = body?.manifest ?? null;
+  const manifestValid = body?.manifestVerdict.valid ?? null;
+  const score = body?.score ?? null;
+  const attestations = body?.attestations ?? null;
+  const verifiedCount = body?.verifiedCount ?? 0;
+  const totalCount = body?.totalCount ?? 0;
 
   const name =
     queryName ??
@@ -120,13 +91,6 @@ const Page = () => {
     1,
     ...(score?.breakdown.map((b) => b.value) ?? [1]),
   );
-
-  const retry = useCallback(() => {
-    setLoadError(null);
-    setManifest(null);
-    setScore(null);
-    setAttestations(null);
-  }, []);
 
   return (
     <div className="bg-white text-black min-h-screen flex flex-col items-center px-4 py-6 relative overflow-hidden">
@@ -141,7 +105,7 @@ const Page = () => {
 
           <div className="flex-1 flex items-center gap-3 min-w-0">
             <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden">
-              <AgentAvatar name={name} className="w-full h-full" />
+              <AgentAvatar name={name} seed={id ?? undefined} className="w-full h-full" />
             </div>
             <div className="flex flex-col items-start gap-0.5 min-w-0">
               <h1 className="text-sm font-medium tracking-tight text-neutral-900 truncate">
@@ -178,22 +142,23 @@ const Page = () => {
           </Link>
         </header>
 
-        {loadError ? (
+        {loadError && body === null ? (
           <main className="bg-neutral-100/70 p-2 rounded-2xl shadow-sm ring-1 ring-neutral-200/50">
             <div className="bg-white rounded-xl p-6 text-center border border-neutral-100">
               <p className="text-sm text-rose-600 font-medium">{loadError}</p>
               <button
-                onClick={retry}
+                onClick={reload}
                 className="mt-3 text-xs font-medium text-neutral-600 hover:text-neutral-900 transition-colors"
               >
                 retry
               </button>
             </div>
           </main>
-        ) : manifest === null || score === null ? (
+        ) : body === null || manifest === null || score === null || attestations === null ? (
           <main className="bg-neutral-100/70 p-2 rounded-2xl shadow-sm ring-1 ring-neutral-200/50">
-            <div className="bg-white rounded-xl p-6 text-center text-sm text-neutral-500 border border-neutral-100">
-              loading…
+            <div className="bg-white rounded-xl p-6 border border-neutral-100 flex items-center justify-center gap-2.5 text-sm text-neutral-500">
+              <ThinkingOrb state="searching" size={20} />
+              loading score
             </div>
           </main>
         ) : (

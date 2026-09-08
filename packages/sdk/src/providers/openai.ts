@@ -47,16 +47,24 @@ class OpenAiChatCore implements ProviderClient {
   ): Promise<ProviderResponse> {
     const body = {
       model: config.model,
-      messages: messages.map((message) => {
-        if ("name" in message) {
-          // a tool result: deliver as a user turn labeled with the tool
-          // name, matching the historical openai wire format even though
-          // the message model may carry extra structured fields that this
-          // provider does not model.
-          return { role: "user", content: message.content, name: message.name };
-        }
-        return { role: message.role, content: message.content };
-      }),
+      messages: [
+        // openai / openai-compatible wire format: system instruction as the
+        // first role:system message in the conversation, separate from the
+        // user/assistant flow. when absent, the provider uses its default.
+        ...(config.system
+          ? [{ role: "system" as const, content: config.system }]
+          : []),
+        ...messages.map((message) => {
+          if ("name" in message) {
+            // a tool result: deliver as a user turn labeled with the tool
+            // name, matching the historical openai wire format even though
+            // the message model may carry extra structured fields that this
+            // provider does not model.
+            return { role: "user" as const, content: message.content, name: message.name };
+          }
+          return { role: message.role, content: message.content };
+        }),
+      ],
       tools: config.tools.map((tool) => ({
         type: "function",
         function: {

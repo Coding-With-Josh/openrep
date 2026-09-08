@@ -3,11 +3,12 @@ import { bottts } from '@dicebear/collection';
 
 type AgentAvatarProps = {
   name: string;
+  seed?: string;
   className?: string;
 };
 
-const AgentAvatar = ({ name, className }: AgentAvatarProps) => {
-  const avatar = createAvatar(bottts, { seed: name }).toDataUri();
+const AgentAvatar = ({ name, seed, className }: AgentAvatarProps) => {
+  const avatar = createAvatar(bottts, { seed: seed ?? name }).toDataUri();
   return <img src={avatar} alt={`avatar for ${name}`} className={className} />;
 };
 

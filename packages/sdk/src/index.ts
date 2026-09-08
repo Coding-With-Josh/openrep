@@ -24,7 +24,7 @@ export {
 } from "./agent.js";
 export type { CreateAgentOptions, ManifestFields } from "./agent.js";
 export { canonicalize, MAX_CANONICAL_DEPTH } from "./canonical.js";
-export { ADJECTIVES, NOUNS, COLORS, generateName } from "./names.js";
+export { ADJECTIVES, NOUNS, COLORS, generateName, generateNameBatch } from "./names.js";
 export { attest, verifyAttestation, ATTESTATION_SCHEMA_VERSION, ingest } from "./attestation.js";
 export { revokeAgent, REVOCATION_REQUEST_MAX_AGE_MS } from "./revocation.js";
 export { rotateAgent, ROTATION_REQUEST_MAX_AGE_MS } from "./rotation.js";

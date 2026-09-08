@@ -61,6 +61,14 @@ export class CachedFetchError extends Error {
   }
 }
 
+// minimum time a real (uncached) loading state stays visible before its
+// result paints. a local fetch resolves in tens of milliseconds, which would
+// flash the loading orb for a single frame; enforcing one full thinking-orb
+// sweep (~700ms at size 20) makes the state readable instead of a flicker.
+// cache hits are exempt on purpose: instant reload paints were the explicit
+// requirement, so they never wait on this.
+export const MIN_LOADING_MS = 700;
+
 // parses a fetch response for the cached-data layer: 2xx becomes the json
 // body, anything else becomes a CachedFetchError carrying the http status
 // (403 is how the api expresses a missing/live-session key, which the cache
@@ -93,9 +101,18 @@ export async function cachedFetch<T>(url: string, init?: RequestInit): Promise<T
 // not yet known) skips loading. when revalidation fails but a cached copy
 // exists, the stale copy stays visible and the refresh error is surfaced
 // separately rather than wiping the screen.
+export type CachedDataOptions<T> = {
+  // decides whether a background load wins over what is already on screen.
+  // default is fresh-wins. pass a custom merge when a stale GET can resolve
+  // after a mutation commit (chat transcript: a pre-flight GET lands after
+  // the chat POST wrote the newer transcript). runs as merge(current, fresh).
+  merge?: (prev: T, fresh: T) => T;
+};
+
 export function useCachedData<T>(
   key: string | null,
   fetcher: () => Promise<T>,
+  options?: CachedDataOptions<T>,
 ): {
   data: T | null;
   error: string | null;
@@ -104,9 +121,15 @@ export function useCachedData<T>(
   // writes a server-returned fresh value (e.g. the full transcript the chat
   // POST already returned) into state and the cache, avoiding a re-fetch.
   commit: (value: T) => void;
+  // marks this key as locked (403 from a mutation, e.g. chat POST): the
+  // session key is gone, so fail closed to the locked state and drop the
+  // cached copy rather than showing stale data as live.
+  lock: () => void;
 } {
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const mergeRef = useRef(options?.merge);
+  mergeRef.current = options?.merge;
   const keyRef = useRef(key);
   keyRef.current = key;
 
@@ -114,54 +137,106 @@ export function useCachedData<T>(
   const [error, setError] = useState<string | null>(null);
   const [locked, setLocked] = useState(false);
   const [nonce, setNonce] = useState(0);
+  const dataRef = useRef(data);
+  dataRef.current = data;
+  const loadStartedAtRef = useRef(0);
+  const holdTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     if (key === null) return;
     let cancelled = false;
-    // instant paint from the cache for this identity before the fetch returns.
+    // a genuine load: nothing is on screen yet, the loading orb is visible,
+    // and its result must be held for MIN_LOADING_MS so the animation reads.
     const cached = cacheGet<T>(key);
+    const genuineLoad = cached === null && dataRef.current === null;
+    if (genuineLoad) loadStartedAtRef.current = Date.now();
     if (cached !== null) {
       setData(cached);
       setLocked(false);
       setError(null);
     }
+    // applies a state transition, holding it to the minimum loading span
+    // when the orb is actually on screen (cache-hit revalidation is exempt).
+    const apply = (fn: () => void) => {
+      if (cancelled) return;
+      if (!genuineLoad) {
+        fn();
+        return;
+      }
+      const elapsed = Date.now() - loadStartedAtRef.current;
+      const remaining = MIN_LOADING_MS - elapsed;
+      if (remaining <= 0) {
+        fn();
+        return;
+      }
+      holdTimerRef.current = window.setTimeout(() => {
+        if (cancelled) return;
+        holdTimerRef.current = null;
+        fn();
+      }, remaining);
+    };
     const load = async () => {
       try {
         const fresh = await fetcherRef.current();
-        if (cancelled) return;
-        setData(fresh);
-        setLocked(false);
-        setError(null);
-        cacheSet(key, fresh);
-      } catch (err) {
-        if (cancelled) return;
-        const status = err instanceof CachedFetchError ? err.status : 0;
-        if (status === 403) {
-          // session key for this agent no longer exists: locked, fail closed.
-          setLocked(true);
+        apply(() => {
+          // merge guards the check-then-write race where a GET resolves after
+          // a mutation commit: without it, the stale fetch would overwrite the
+          // fresher transcript/score already on screen.
+          const prev = dataRef.current;
+          const next =
+            prev !== null && mergeRef.current ? mergeRef.current(prev, fresh) : fresh;
+          setData(next);
+          setLocked(false);
           setError(null);
-          return;
-        }
-        if (cacheGet<T>(key) !== null) {
-          // keep the cached copy visible, surface the refresh failure gently.
-          setError("could not refresh, showing the last loaded copy");
-        } else {
-          setError(err instanceof Error ? err.message : "could not load, try again shortly");
-        }
+          cacheSet(key, next);
+        });
+      } catch (err) {
+        apply(() => {
+          const status = err instanceof CachedFetchError ? err.status : 0;
+          if (status === 403) {
+            // session key for this agent no longer exists: locked, fail closed.
+            setLocked(true);
+            setError(null);
+            return;
+          }
+          if (cacheGet<T>(key) !== null) {
+            // keep the cached copy visible, surface the refresh failure gently.
+            setError("could not refresh, showing the last loaded copy");
+          } else {
+            setError(err instanceof Error ? err.message : "could not load, try again shortly");
+          }
+        });
       }
     };
     void load();
     return () => {
       cancelled = true;
+      if (holdTimerRef.current !== null) {
+        window.clearTimeout(holdTimerRef.current);
+        holdTimerRef.current = null;
+      }
     };
   }, [key, nonce]);
 
-  const reload = useCallback(() => setNonce((n) => n + 1), []);
+const reload = useCallback(() => setNonce((n) => n + 1), []);
   const commit = useCallback((value: T) => {
     setData(value);
     if (keyRef.current !== null) cacheSet(keyRef.current, value);
   }, []);
+  const lock = useCallback(() => {
+    if (keyRef.current !== null) {
+      memory.delete(keyRef.current);
+      const s = storage();
+      if (s !== null) {
+        try {
+          s.removeItem(`openrep:${keyRef.current}`);
+        } catch {
+          // ignore storage failures on the purge path
+        }
+      }
+    }
+    setLocked(true);
+  }, []);
 
-
-  return { data, error, locked, reload, commit };
+  return { data, error, locked, reload, commit, lock };
 }

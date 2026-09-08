@@ -24,6 +24,12 @@ export interface AgentConfig {
   // else. never a guessed default: callers must name their endpoint.
   baseUrl?: string;
   tools: ToolDefinition[];
+  // optional system-level instruction prepended to every provider call.
+  // the sdk never mutates conversation history with it: each adapter
+  // translates it into the provider-native wire format at call time
+  // (openai: role:system message; anthropic: top-level system field;
+  // gemini: systemInstruction content block).
+  system?: string;
 }
 
 // the raw functionCall fields a provider may attach to a tool call. carried

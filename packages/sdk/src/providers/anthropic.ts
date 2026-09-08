@@ -26,6 +26,10 @@ export class AnthropicClient implements ProviderClient {
     const body = {
       model: config.model,
       max_tokens: 2048,
+      // anthropic wire format: the system prompt is a top-level field, not a
+      // conversation turn. attached separately so toTextMessages stays a pure
+      // user/assistant mapping.
+      ...(config.system ? { system: config.system } : {}),
       messages: toTextMessages(messages),
       tools: config.tools.map((tool) => toolPayload(tool.name, tool.description, tool.inputSchema)),
     };

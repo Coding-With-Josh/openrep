@@ -7,6 +7,9 @@
 // contract tested in isolation: persistence must work for any structurally
 // valid record, and signature verification is not this layer's job.
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createSqliteStorage } from "../src/index.js";
 import type {
   AccountLink,
@@ -486,6 +489,87 @@ describe("sqlite storage adapter: chat history", () => {
     expect(messages.map((m) => m.role)).toEqual(["user", "assistant"]);
     expect(messages.map((m) => m.content)).toEqual(["build a schema", "done"]);
     expect(messages[1].toolsUsed).toEqual([{ tool: "bash", input: "ls" }]);
+  });
+
+  it("links each assistant message to its attestation id and nulls user messages", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "chat-attestation.agent" });
+    await storage.saveAgent(agent);
+    await storage.createChatSession(agent.publicKey, "owner-a", "2026-01-01T00:00:00.000Z");
+
+    await storage.appendChatMessage(
+      makeMessage({ agentId: agent.publicKey, ownerUserId: "owner-a", role: "user", content: "ask" }),
+    );
+    await storage.appendChatMessage(
+      makeMessage({
+        agentId: agent.publicKey,
+        ownerUserId: "owner-a",
+        role: "assistant",
+        content: "answer",
+        attestationId: "att-123",
+        timestamp: "2026-01-01T00:00:01.000Z",
+      }),
+    );
+
+    const messages = await storage.getChatMessages(agent.publicKey, "owner-a");
+    expect(messages[0].attestationId).toBeNull();
+    expect(messages[1].attestationId).toBe("att-123");
+  });
+
+  it("backfills legacy assistant messages with their attestation links on the next open", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "openrep-sqlite-backfill-"));
+    const dbPath = join(dir, "legacy.db");
+    try {
+      const first = createSqliteStorage(dbPath);
+      const agent = makeAgent({ name: "legacy-links.agent" });
+      await first.saveAgent(agent);
+      await first.createChatSession(agent.publicKey, "owner-a", "2026-01-01T00:00:00.000Z");
+      // rows in the shape the app wrote before attestation_id existed: the
+      // reply carries no link, but its attestation row was always persisted.
+      await first.saveAttestation(
+        makeAttestation(agent.publicKey, {
+          id: "att-legacy-1",
+          output: "legacy answer",
+          timestamp: "2026-01-01T00:00:00.500Z",
+        }),
+      );
+      await first.appendChatMessage(
+        makeMessage({ agentId: agent.publicKey, ownerUserId: "owner-a", role: "user", content: "ask" }),
+      );
+      await first.appendChatMessage(
+        makeMessage({
+          agentId: agent.publicKey,
+          ownerUserId: "owner-a",
+          role: "assistant",
+          content: "legacy answer",
+          timestamp: "2026-01-01T00:00:01.000Z",
+        }),
+      );
+      // an orphan reply with no matching attestation stays unlinked
+      await first.appendChatMessage(
+        makeMessage({
+          agentId: agent.publicKey,
+          ownerUserId: "owner-a",
+          role: "assistant",
+          content: "orphan answer",
+          timestamp: "2026-01-01T00:00:02.000Z",
+        }),
+      );
+
+      // reopening boots the migration and links the legacy reply
+      const reopened = createSqliteStorage(dbPath);
+      const messages = await reopened.getChatMessages(agent.publicKey, "owner-a");
+      expect(messages[1].attestationId).toBe("att-legacy-1");
+      expect(messages[2].attestationId).toBeNull();
+
+      // idempotent: a third open leaves the link untouched
+      const third = createSqliteStorage(dbPath);
+      const again = await third.getChatMessages(agent.publicKey, "owner-a");
+      expect(again[1].attestationId).toBe("att-legacy-1");
+      expect(again[2].attestationId).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("appending to a pair with no session fails closed with CHAT_SESSION_NOT_FOUND", async () => {

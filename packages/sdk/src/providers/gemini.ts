@@ -37,6 +37,13 @@ export class GeminiClient implements ProviderClient {
     const body: Record<string, unknown> = {
       contents: toGeminiContents(messages),
     };
+    if (config.system) {
+      // gemini wire format: system instruction is a top-level
+      // systemInstruction content block, not a conversation turn. the sdk
+      // supplies it separately so the user/assistant contents never carry the
+      // raw instruction as model-facing text.
+      body.systemInstruction = { parts: [{ text: config.system }] };
+    }
     if (config.tools.length > 0) {
       body.tools = [
         {

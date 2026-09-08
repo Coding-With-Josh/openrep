@@ -68,14 +68,16 @@ export function SignInModal({
     setError(null);
     try {
       const res = await signIn('google', { redirect: false });
-      if (res?.error) {
+      // with redirect:false, signIn never navigates: it returns the provider
+      // authorization url and the app must send the browser there itself.
+      // failing to do so was the old "mock": the modal claimed success while
+      // Google was never contacted.
+      if (res?.error || !res?.url) {
         setSubmitMode(null);
         setError("couldn't sign you in — try again");
         return;
       }
-      onSignedIn('Google account');
-      setSuccess(true);
-      setTimeout(onClose, 900);
+      window.location.assign(res.url);
     } catch {
       setSubmitMode(null);
       setError("couldn't sign you in — try again");

@@ -8,35 +8,40 @@ import { cn } from '@/lib/utils';
 import AgentAvatar from '@/components/ui/agent-avatar';
 import { useGuestSession } from '@/lib/session';
 
+import { generateNameBatch } from "@openrep/sdk/names";
+
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-const NAME_CANDIDATES = [
-  'beautiful-pig-black',
-  'curious-otter-blue',
-  'silent-owl-green',
-  'brave-fox-red',
-  'gentle-dove-white',
-  'lucky-cat-gold',
-];
-
-const pickCandidate = (current: string | null) => {
-  const pool = NAME_CANDIDATES.filter((n) => n !== current);
-  return pool[Math.floor(Math.random() * pool.length)];
-};
+// candidates come from the sdk name module: every reroll draws a fresh
+// shuffled batch with no repeated word or name, so the cycle never offers
+// the same bot twice until the batch is exhausted.
+const NAME_BATCH_SIZE = 8;
+const toInputValue = (candidate: string) => candidate.replace(/\.agent$/, "");
 
 type ApiError = { error?: { code?: string; message?: string } };
 
 const Page = () => {
   const router = useRouter();
   const { ready: sessionReady, error: sessionError } = useGuestSession();
-  const [name, setName] = useState(() => pickCandidate(null));
+  const [candidates, setCandidates] = useState<string[]>(() => generateNameBatch(NAME_BATCH_SIZE));
+  const [name, setName] = useState(() => toInputValue(candidates[0]));
+  const [candidateIndex, setCandidateIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
   const handleReroll = () => {
     if (creating) return;
     setError(null);
-    setName(pickCandidate(name));
+    const nextIndex = candidateIndex + 1;
+    if (nextIndex < candidates.length) {
+      setCandidateIndex(nextIndex);
+      setName(toInputValue(candidates[nextIndex]));
+      return;
+    }
+    const fresh = generateNameBatch(NAME_BATCH_SIZE);
+    setCandidates(fresh);
+    setCandidateIndex(0);
+    setName(toInputValue(fresh[0]));
   };
 
   const handleCreate = async (e: React.FormEvent) => {
