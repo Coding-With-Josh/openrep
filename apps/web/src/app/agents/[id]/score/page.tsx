@@ -163,7 +163,7 @@ const Page = () => {
           </main>
         ) : (
           <main className="flex flex-col gap-4">
-            <div className="bg-white rounded-2xl border border-neutral-200 p-5 flex items-center justify-between gap-4">
+            <div className="bg-white rounded-2xl border border-neutral-200 p-5 flex flex-col items-stretch gap-4 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-md font-medium tracking-tight text-neutral-400">
                   composite score
@@ -172,7 +172,7 @@ const Page = () => {
                   {composite.toFixed(2)}
                 </p>
               </div>
-              <div className="flex flex-col items-end gap-1">
+              <div className="flex flex-col items-start gap-1 sm:items-end">
                 <div
                   className={`flex items-center gap-1.5 text-xs font-medium ${
                     manifestValid ? "text-emerald-700" : "text-rose-600"

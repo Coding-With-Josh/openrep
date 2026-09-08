@@ -88,30 +88,30 @@ const Page = () => {
   };
 
   return (
-    <div className="bg-white text-black min-h-screen flex flex-col items-center justify-center px-6 py-10 relative overflow-hidden">
+    <div className="bg-white text-black min-h-screen flex flex-col items-center justify-center px-6 py-10 relative overflow-hidden dark:bg-neutral-950 dark:text-neutral-100">
       <div className="relative w-full max-w-lg flex flex-col gap-6 z-10">
         <Link
           href="/agents"
-          className="flex items-center gap-2 w-fit text-sm text-neutral-500 hover:text-neutral-700 transition-all duration-200 hover:scale-102 active:scale-98"
+          className="flex items-center gap-2 w-fit text-sm text-neutral-500 hover:text-neutral-700 transition-all duration-200 hover:scale-102 active:scale-98 dark:text-neutral-400 dark:hover:text-neutral-200"
         >
           <ArrowLeft className="w-4 h-4" />
           your agents
         </Link>
 
         <header className="flex flex-col items-start gap-2">
-          <h1 className="text-3xl font-medium tracking-tight text-neutral-900">
+          <h1 className="text-3xl font-medium tracking-tight text-neutral-900 dark:text-neutral-50">
             create an agent
           </h1>
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-neutral-500 dark:text-neutral-400">
             name it, or keep the generated one. agents start at score 0.00.
           </p>
         </header>
 
         <form onSubmit={handleCreate}>
-          <main className="bg-neutral-100/70 p-2 rounded-2xl shadow-sm ring-1 ring-neutral-200/50">
-            <div className="bg-white rounded-xl p-4 shadow-sm border border-neutral-100 flex flex-col gap-4">
+          <main className="bg-neutral-100/70 p-2 rounded-2xl shadow-sm ring-1 ring-neutral-200/50 dark:bg-white/5 dark:ring-white/10">
+            <div className="bg-white rounded-xl p-4 shadow-sm border border-neutral-100 flex flex-col gap-4 dark:bg-black/20 dark:border-neutral-800 dark:shadow-white/5">
               <div className="flex items-center gap-3">
-                <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden shrink-0">
+                <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden shrink-0 dark:from-neutral-800 dark:to-neutral-700">
                   <AgentAvatar name={name} className="w-full h-full" />
                 </div>
                 <div className="flex-1 min-w-0">
@@ -124,7 +124,7 @@ const Page = () => {
                     disabled={creating}
                     spellCheck={false}
                     placeholder="word-word-word"
-                    className="w-full bg-transparent text-lg font-medium tracking-tight text-neutral-900 placeholder-neutral-400 outline-none disabled:opacity-50"
+                    className="w-full bg-transparent text-lg font-medium tracking-tight text-neutral-900 placeholder-neutral-400 outline-none disabled:opacity-50 dark:text-neutral-50 dark:placeholder-neutral-500"
                   />
                   <p className="text-xs text-neutral-400 mt-0.5">
                     lowercase letters, digits and hyphens, no spaces
@@ -136,10 +136,10 @@ const Page = () => {
                   disabled={creating}
                   aria-label="Reroll name"
                   className={cn(
-                    'p-2 rounded-full text-neutral-500 transition-all duration-200',
+                    'p-2 rounded-full text-neutral-500 transition-all duration-200 dark:text-neutral-400',
                     creating
                       ? 'opacity-40 cursor-not-allowed'
-                      : 'hover:bg-neutral-100 hover:text-neutral-700 hover:scale-102 active:scale-98'
+                      : 'hover:bg-neutral-100 hover:text-neutral-700 hover:scale-102 active:scale-98 dark:hover:bg-white/10 dark:hover:text-neutral-200'
                   )}
                 >
                   <RefreshCw className="w-4 h-4" />
@@ -147,19 +147,19 @@ const Page = () => {
               </div>
 
               <div className="flex items-center justify-between">
-                <span className="font-mono text-sm font-medium tracking-tight text-neutral-700">
+                <span className="font-mono text-sm font-medium tracking-tight text-neutral-700 dark:text-neutral-200">
                   score 0.00
                 </span>
                 <span className="text-xs text-neutral-400">no attestations yet</span>
               </div>
 
-              {error && <p className="text-xs text-rose-600 font-medium">{error}</p>}
+              {error && <p className="text-xs text-rose-600 font-medium dark:text-rose-400">{error}</p>}
 
               <button
                 type="submit"
                 disabled={creating}
                 className={cn(
-                  'w-full flex items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-2.5 text-sm font-medium tracking-tight text-white transition-all duration-200',
+                  'w-full flex items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-2.5 text-sm font-medium tracking-tight text-white transition-all duration-200 dark:bg-white dark:text-black',
                   creating ? 'opacity-60 cursor-not-allowed' : 'hover:scale-102 active:scale-98'
                 )}
               >

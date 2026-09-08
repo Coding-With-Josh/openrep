@@ -61,15 +61,30 @@ function MessageActionCopy({ value, label }: { value: string; label: string }) {
     }
   };
   return (
-    <button type="button" onClick={handleCopy} aria-label={label} title={label} className={actionButton}>
-      {copied ? <Check className="size-3.5 text-emerald-600" /> : <Copy className="size-3.5" />}
+    <button
+      type="button"
+      onClick={handleCopy}
+      aria-label={label}
+      title={label}
+      className={actionButton}
+    >
+      {copied ? (
+        <Check className="size-3.5 text-emerald-600" />
+      ) : (
+        <Copy className="size-3.5" />
+      )}
     </button>
   );
 }
 type AgentScore = {
   agentId: string;
   composite: number;
-  breakdown: { source: string; value: number; count: number; lastUpdated: string }[];
+  breakdown: {
+    source: string;
+    value: number;
+    count: number;
+    lastUpdated: string;
+  }[];
   computedAt: string;
 };
 type Attestation = {
@@ -108,19 +123,23 @@ export default function ChatInterface() {
   const [name, setName] = useState<string | null>(queryName ?? null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [message, setMessage] = useState("");
-  const [pendingMessage, setPendingMessage] = useState<ChatMessage | null>(null);
+  const [pendingMessage, setPendingMessage] = useState<ChatMessage | null>(
+    null,
+  );
   const [sendSeq, setSendSeq] = useState(0);
   const [sendError, setSendError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const firstScrollRef = useRef(true);
   const prevGeneratingRef = useRef(false);
 
-  const transcriptKey = sessionReady && guest !== null && id !== undefined
-    ? `chat:${guest.userId}:${id}`
-    : null;
-  const scoreKey = sessionReady && guest !== null && id !== undefined
-    ? `score:${guest.userId}:${id}`
-    : null;
+  const transcriptKey =
+    sessionReady && guest !== null && id !== undefined
+      ? `chat:${guest.userId}:${id}`
+      : null;
+  const scoreKey =
+    sessionReady && guest !== null && id !== undefined
+      ? `score:${guest.userId}:${id}`
+      : null;
 
   const {
     data: transcriptData,
@@ -130,7 +149,10 @@ export default function ChatInterface() {
     lock: lockTranscript,
   } = useCachedData<{ agentId: string; messages: ChatMessage[] }>(
     transcriptKey,
-    () => cachedFetch<{ agentId: string; messages: ChatMessage[] }>(`/api/agents/${encodeURIComponent(id ?? "")}/chat`),
+    () =>
+      cachedFetch<{ agentId: string; messages: ChatMessage[] }>(
+        `/api/agents/${encodeURIComponent(id ?? "")}/chat`,
+      ),
     // a mount-time transcript GET can resolve after the chat POST committed
     // the fresher full transcript (groq takes seconds); length is monotonic
     // for one agent, so never regress to a shorter list.
@@ -145,7 +167,9 @@ export default function ChatInterface() {
         // a cached transcript from before the per-message attestation
         // backfill cannot hold the footers hostage.
         const linked = (msgs: ChatMessage[]) =>
-          msgs.filter((m) => m.attestationId !== null && m.attestationId !== undefined).length;
+          msgs.filter(
+            (m) => m.attestationId !== null && m.attestationId !== undefined,
+          ).length;
         return linked(fresh.messages) >= linked(prev.messages) ? fresh : prev;
       },
     },
@@ -157,12 +181,17 @@ export default function ChatInterface() {
     commit: commitScore,
   } = useCachedData<{ manifest?: { name: string }; score?: AgentScore }>(
     scoreKey,
-    () => cachedFetch<{ manifest?: { name: string }; score?: AgentScore }>(`/api/agents/${encodeURIComponent(id ?? "")}/score`),
+    () =>
+      cachedFetch<{ manifest?: { name: string }; score?: AgentScore }>(
+        `/api/agents/${encodeURIComponent(id ?? "")}/score`,
+      ),
     // composite only ever grows (attestations are append-only), so a stale
     // score GET resolving late must not regress the chip after a chat POST.
     {
       merge: (prev, fresh) =>
-        (fresh.score?.composite ?? 0) >= (prev.score?.composite ?? 0) ? fresh : prev,
+        (fresh.score?.composite ?? 0) >= (prev.score?.composite ?? 0)
+          ? fresh
+          : prev,
     },
   );
 
@@ -183,7 +212,9 @@ export default function ChatInterface() {
   // optimistic display list: server transcript plus the in-flight user bubble.
   const messages = transcriptData?.messages ?? null;
   const displayedMessages: ChatMessage[] =
-    pendingMessage === null ? (messages ?? []) : [...(messages ?? []), pendingMessage];
+    pendingMessage === null
+      ? messages ?? []
+      : [...(messages ?? []), pendingMessage];
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior) => {
     bottomRef.current?.scrollIntoView({ behavior, block: "end" });
@@ -246,10 +277,13 @@ export default function ChatInterface() {
           // the session key is gone (expired or never held): purge the cached
           // transcript and lock the composer, fail closed to the locked state.
           lockTranscript();
-          setSendError("this agent's session expired, create a new agent to continue");
+          setSendError(
+            "this agent's session expired, create a new agent to continue",
+          );
         } else {
           setSendError(
-            (body as ApiError).error?.message ?? "the agent could not run, try again",
+            (body as ApiError).error?.message ??
+              "the agent could not run, try again",
           );
         }
         // the message never landed on the ledger: drop the optimistic bubble
@@ -265,7 +299,10 @@ export default function ChatInterface() {
         attestation: Attestation;
       };
       commitTranscript({ agentId: id, messages: okBody.chatSession.messages });
-      commitScore({ manifest: { name: `${(name ?? id.slice(0, 8))}.agent` }, score: okBody.score });
+      commitScore({
+        manifest: { name: `${name ?? id.slice(0, 8)}.agent` },
+        score: okBody.score,
+      });
       setPendingMessage(null);
     } catch {
       setPendingMessage(null);
@@ -292,9 +329,12 @@ export default function ChatInterface() {
   };
 
   const displayName = name ?? (id !== undefined ? id.slice(0, 8) : "agent");
-  const scoreDelta = scoreData?.score !== undefined && scoreData.score !== null && scoreData.score.composite > 0
-    ? `+${scoreData.score.composite.toFixed(2)}`
-    : "+0.00";
+  const scoreDelta =
+    scoreData?.score !== undefined &&
+    scoreData.score !== null &&
+    scoreData.score.composite > 0
+      ? `+${scoreData.score.composite.toFixed(2)}`
+      : "+0.00";
 
   return (
     <div className="h-screen bg-white flex flex-col font-sans relative overflow-hidden">
@@ -309,7 +349,11 @@ export default function ChatInterface() {
 
         <div className="flex-1 flex items-center gap-3 min-w-0">
           <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden">
-            <AgentAvatar name={displayName} seed={id} className="w-full h-full" />
+            <AgentAvatar
+              name={displayName}
+              seed={id}
+              className="w-full h-full"
+            />
           </div>
           <div className="flex flex-col items-start gap-0.5 min-w-0">
             <h1 className="text-sm font-medium tracking-tight text-neutral-900 truncate">
@@ -336,7 +380,9 @@ export default function ChatInterface() {
 
         {/* Live Score Chip */}
         <Link
-          href={`/agents/${encodeURIComponent(id ?? "")}/score?name=${encodeURIComponent(displayName)}`}
+          href={`/agents/${encodeURIComponent(
+            id ?? "",
+          )}/score?name=${encodeURIComponent(displayName)}`}
           className="ml-auto shrink-0"
         >
           <BorderBeamButton
@@ -345,12 +391,17 @@ export default function ChatInterface() {
             className="cursor-pointer rounded-full text-md font-mono tracking-tight font-medium text-neutral-700 bg-transparent hover:bg-neutral-50"
           >
             <span className="size-2 rounded-full bg-emerald-500"></span>
-            score {scoreData?.score !== undefined && scoreData.score !== null ? scoreData.score.composite.toFixed(2) : "—"}
-            {scoreData?.score !== undefined && scoreData.score !== null && scoreData.score.composite > 0 && (
-              <span className="text-emerald-600 text-sm font-semibold ml-2">
-                {scoreDelta}
-              </span>
-            )}
+            score{" "}
+            {scoreData?.score !== undefined && scoreData.score !== null
+              ? scoreData.score.composite.toFixed(2)
+              : "—"}
+            {scoreData?.score !== undefined &&
+              scoreData.score !== null &&
+              scoreData.score.composite > 0 && (
+                <span className="text-emerald-600 text-sm font-semibold ml-2">
+                  {scoreDelta}
+                </span>
+              )}
           </BorderBeamButton>
         </Link>
       </header>
@@ -364,7 +415,9 @@ export default function ChatInterface() {
             <div className="flex flex-col gap-3 py-4 pr-3 min-h-full">
               {loadError ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center py-6 gap-3">
-                  <p className="text-sm font-medium text-rose-600">{loadError}</p>
+                  <p className="text-sm font-medium text-rose-600">
+                    {loadError}
+                  </p>
                   <Link
                     href="/agents"
                     className="text-xs text-neutral-500 hover:text-neutral-700 transition-colors"
@@ -410,30 +463,67 @@ export default function ChatInterface() {
                   // animate only the newest bubble (the fresh reply or the
                   // optimistic user bubble); history is static.
                   const isNew =
-                    (pendingMessage !== null && idx === displayedMessages.length - 1) ||
-                    (pendingMessage === null && idx === displayedMessages.length - 1 && msg.role === "agent");
+                    (pendingMessage !== null &&
+                      idx === displayedMessages.length - 1) ||
+                    (pendingMessage === null &&
+                      idx === displayedMessages.length - 1 &&
+                      msg.role === "agent");
                   const key =
-                    pendingMessage !== null && idx === displayedMessages.length - 1
+                    pendingMessage !== null &&
+                    idx === displayedMessages.length - 1
                       ? `pending-${sendSeq}`
                       : idx;
                   return msg.role === "agent" ? (
                     <motion.div
                       key={key}
                       {...(isNew ? bubbleMotion : { initial: false })}
-                      className="group flex items-start gap-1.5 max-w-[85%]"
+                      className="group flex flex-col items-start gap-1"
                     >
-                      <div className="min-w-0 flex flex-col items-start gap-1">
-                        <div className="rounded-2xl tracking-[-0.018em] px-4 py-3 text-sm text-neutral-800 wrap-break-words">
-                          <Markdown content={msg.content} />
+                      <div className="max-w-[85%] min-w-0 rounded-2xl tracking-[-0.018em] px-4 text-sm text-neutral-800 wrap-break-words">
+                        <Markdown content={msg.content} />
+                      </div>
+                      {msg.toolsUsed.length > 0 && (
+                        <div className="flex items-center gap-2 px-2">
+                          <span className="flex items-center gap-1.5 text-xs text-neutral-500">
+                            {toolLine(msg.toolsUsed)}
+                          </span>
                         </div>
-                        {msg.toolsUsed.length > 0 && (
-                          <div className="flex items-center gap-2 px-2">
-                            <span className="flex items-center gap-1.5 text-xs text-neutral-500">
-                              {toolLine(msg.toolsUsed)}
-                            </span>
+                      )}
+                      {!locked && (
+                        <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out group-hover:grid-rows-[1fr] group-focus-within:grid-rows-[1fr]">
+                          <div className="min-h-0 overflow-hidden">
+                            <div className="flex items-center gap-1 py-1">
+                              <MessageActionCopy
+                                value={plainTextFromMarkdown(msg.content)}
+                                label="Copy message text"
+                              />
+                              {idx > 0 &&
+                                displayedMessages[idx - 1].role === "user" && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      void handleRetry(
+                                        displayedMessages[idx - 1].content,
+                                      )
+                                    }
+                                    disabled={isGenerating}
+                                    aria-label="Retry this answer"
+                                    title="Retry this answer"
+                                    className={`${actionButton} ${
+                                      isGenerating
+                                        ? "opacity-40 cursor-not-allowed"
+                                        : ""
+                                    }`}
+                                  >
+                                    <RefreshCw className="size-3.5" />
+                                  </button>
+                                )}
+                            </div>
                           </div>
-                        )}
-                        {msg.attestationId !== null && msg.attestationId !== undefined && (
+                        </div>
+                      )}
+                      {msg.attestationId !== null &&
+                        msg.attestationId !== undefined && (
                           <div className="flex items-center pl-2 pr-1">
                             <CopyButton
                               value={msg.attestationId}
@@ -447,42 +537,28 @@ export default function ChatInterface() {
                             </CopyButton>
                           </div>
                         )}
-                      </div>
-                      {!locked && (
-                        <div className="flex flex-col gap-1 pt-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                          <MessageActionCopy
-                            value={plainTextFromMarkdown(msg.content)}
-                            label="Copy message text"
-                          />
-                          {idx > 0 && displayedMessages[idx - 1].role === "user" && (
-                            <button
-                              type="button"
-                              onClick={() => void handleRetry(displayedMessages[idx - 1].content)}
-                              disabled={isGenerating}
-                              aria-label="Retry this answer"
-                              title="Retry this answer"
-                              className={`${actionButton} ${isGenerating ? "opacity-40 cursor-not-allowed" : ""}`}
-                            >
-                              <RefreshCw className="size-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      )}
                     </motion.div>
                   ) : (
                     <motion.div
                       key={key}
                       {...(isNew ? bubbleMotion : { initial: false })}
-                      className="group flex items-start justify-end gap-1.5"
+                      className="group flex flex-col items-end justify-end gap-1"
                     >
-                      {!locked && (
-                        <div className="flex flex-col gap-1 pt-1 opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
-                          <MessageActionCopy value={msg.content} label="Copy message text" />
-                        </div>
-                      )}
-                      <div className="max-w-[85%] bg-neutral-900 rounded-3xl tracking-[-0.016em] px-4 py-3 text-sm text-white whitespace-pre-wrap">
+                      <div className="max-w-[85%] bg-neutral-900 rounded-2xl tracking-[-0.016em] px-4 py-3 text-sm text-white whitespace-pre-wrap">
                         {msg.content}
                       </div>
+                      {!locked && (
+                        <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-300 ease-out group-hover:grid-rows-[1fr] group-focus-within:grid-rows-[1fr]">
+                          <div className="min-h-0 overflow-hidden">
+                            <div className="flex items-center gap-1 py-1">
+                              <MessageActionCopy
+                                value={msg.content}
+                                label="Copy message text"
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </motion.div>
                   );
                 })
@@ -496,7 +572,9 @@ export default function ChatInterface() {
 
               {sendError && (
                 <div className="flex flex-col items-center gap-1.5 px-2">
-                  <p className="text-xs text-rose-600 font-medium">{sendError}</p>
+                  <p className="text-xs text-rose-600 font-medium">
+                    {sendError}
+                  </p>
                   {pendingMessage === null && message.trim().length > 0 && (
                     <button
                       onClick={() => void handleSend()}

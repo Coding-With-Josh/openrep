@@ -1,5 +1,10 @@
 @import "tailwindcss";
 
+/* next-themes toggles the .dark class on <html>; without this custom
+   variant the built-in dark: variant stays tied to the OS media query and
+   a manual light/dark switch would change nothing. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme inline {
   --font-sans:
     var(--font-founders-grotesk), ui-sans-serif, system-ui, sans-serif;
@@ -11,20 +16,3 @@
   --font-pixel-triangle: var(--font-geist-pixel-triangle);
   --font-pixel-line: var(--font-geist-pixel-line);
 }
-
-body {
-  background: #ffffff;
-  color: #171717;
-}
-
-@media (prefers-color-scheme: dark) {
-  body {
-    background: #0a0a0a;
-    color: #ededed;
-  }
-}
-
-.prose :where(pre, code) {
-  all: unset;
-}
-

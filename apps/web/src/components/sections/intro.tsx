@@ -14,7 +14,11 @@ import Link from "next/link";
 export const Intro = () => {
   return (
     <div className="flex flex-col items-center justify-center gap-3 z-1">
-      <PixelHeading initialFont="square" hoverFont="line" className="text-9xl">
+      <PixelHeading
+        initialFont="square"
+        hoverFont="line"
+        className="text-[clamp(2.5rem,15vw,9rem)] sm:text-9xl"
+      >
         openrep
       </PixelHeading>
       <h1 className="text-xl tracking-[-0.02em] font-sans">
@@ -22,13 +26,13 @@ export const Intro = () => {
       </h1>
       <div className="flex items-center justify-center gap-4 mt-6">
         <Link href="/agents">
-          <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-white bg-black rounded-full hover:scale-102 active:scale-98 transition-all">
+          <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-white bg-black rounded-full hover:scale-102 active:scale-98 transition-all dark:bg-white dark:text-black">
             <ArrowUpRightIcon className="w-4 h-4" />
             <h1>launch an agent</h1>
           </button>
         </Link>
         <Link href="/">
-          <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-black bg-black/10 rounded-full hover:scale-102 active:scale-98 transition-all">
+          <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-black bg-black/10 rounded-full hover:scale-102 active:scale-98 transition-all dark:text-white dark:bg-white/10">
             <Play className="w-4 h-4" />
             <h1>watch demo</h1>
           </button>
