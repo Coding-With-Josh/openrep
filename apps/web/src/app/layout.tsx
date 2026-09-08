@@ -53,11 +53,11 @@ export default function RootLayout({
     ${GeistPixelLine.variable} ${sans.variable} ${mono.variable}
     `}
     >
-      <body className="font-sans">
+      <body className="font-sans bg-white text-black dark:bg-neutral-950 dark:text-neutral-100">
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
-        <SessionProvider>{children}</SessionProvider>
-        <Menu />
+        <SessionProvider>{children} <Menu /></SessionProvider>
         </ThemeProvider>
+       
       </body>
     </html>
   );

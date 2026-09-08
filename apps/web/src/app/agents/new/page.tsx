@@ -7,6 +7,7 @@ import { ArrowLeft, Loader2, Plus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import AgentAvatar from '@/components/ui/agent-avatar';
 import { useGuestSession } from '@/lib/session';
+import { invalidateCachePrefix } from '@/lib/client-cache';
 
 import { generateNameBatch } from "@openrep/sdk/names";
 
@@ -73,6 +74,9 @@ const Page = () => {
         return;
       }
       const created = body as AgentManifest;
+      // the agent list page still holds a pre-create cached copy; drop it so
+      // navigating back refetches and shows the new agent immediately.
+      invalidateCachePrefix('agents:');
       // pass the created display name straight to the next route so the
       // header and avatar render instantly instead of waiting on a fetch.
       router.push(

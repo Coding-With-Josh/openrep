@@ -13,15 +13,15 @@ import Link from "next/link";
 
 export const Intro = () => {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 z-1">
+    <div className="flex flex-col items-center justify-center gap-2 z-1">
       <PixelHeading
         initialFont="square"
         hoverFont="line"
-        className="text-[clamp(2.5rem,15vw,9rem)] sm:text-9xl"
+        className="text-8xl lg:text-9xl"
       >
         openrep
       </PixelHeading>
-      <h1 className="text-xl tracking-[-0.02em] font-sans">
+      <h1 className="text-md lg:text-xl tracking-[-0.02em] font-sans">
         Platform-agnostic Reputation Layer for AI Agents.
       </h1>
       <div className="flex items-center justify-center gap-4 mt-6">

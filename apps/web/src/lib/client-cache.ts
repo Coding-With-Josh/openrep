@@ -50,6 +50,31 @@ export function cacheSet<T>(key: string, value: T): void {
   }
 }
 
+// removes every cached entry whose key starts with the given prefix, from
+// both the in-memory map and sessionStorage. used to force a fresh fetch
+// after a mutation commit (agent create) or an identity change (sign out),
+// so a stale list can never paint as if it were the current state.
+export function invalidateCachePrefix(prefix: string): void {
+  for (const key of memory.keys()) {
+    if (key.startsWith(prefix)) memory.delete(key);
+  }
+  const s = storage();
+  if (s === null) return;
+  try {
+    const doomed: string[] = [];
+    for (let i = 0; i < s.length; i += 1) {
+      const storageKey = s.key(i);
+      if (storageKey !== null && storageKey.startsWith(`openrep:${prefix}`)) {
+        doomed.push(storageKey);
+      }
+    }
+    for (const storageKey of doomed) s.removeItem(storageKey);
+  } catch {
+    // storage blocked or full; the in-memory purge above still covers this
+    // page session, and the missing entry just forces a refetch.
+  }
+}
+
 // cache-fetching fetch error carrying the server's status code, so callers
 // can distinguish a locked/expired state from a generic failure.
 export class CachedFetchError extends Error {
@@ -132,6 +157,7 @@ export function useCachedData<T>(
   mergeRef.current = options?.merge;
   const keyRef = useRef(key);
   keyRef.current = key;
+  const prevKeyRef = useRef<string | null>(null);
 
   const [data, setData] = useState<T | null>(() => (key !== null ? cacheGet<T>(key) : null));
   const [error, setError] = useState<string | null>(null);
@@ -145,9 +171,15 @@ export function useCachedData<T>(
   useEffect(() => {
     if (key === null) return;
     let cancelled = false;
+    // when the key changes, the previous key's value belongs to a different
+    // resource or identity: drop it synchronously so the loading state shows
+    // for the new key instead of re-painting the old one's data.
+    const keyChanged = key !== prevKeyRef.current;
+    prevKeyRef.current = key;
     // a genuine load: nothing is on screen yet, the loading orb is visible,
     // and its result must be held for MIN_LOADING_MS so the animation reads.
     const cached = cacheGet<T>(key);
+    if (keyChanged) setData(cached);
     const genuineLoad = cached === null && dataRef.current === null;
     if (genuineLoad) loadStartedAtRef.current = Date.now();
     if (cached !== null) {

@@ -17,17 +17,17 @@ const components: Components = {
     <p className="my-1.5 first:mt-0 last:mb-0 leading-relaxed">{children}</p>
   ),
   h1: ({ children }) => (
-    <h1 className="text-lg font-semibold tracking-tight text-neutral-900 mt-3 first:mt-0 mb-1">
+    <h1 className="text-lg font-semibold tracking-tight text-neutral-900 mt-3 first:mt-0 mb-1 dark:text-neutral-50">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="text-base font-semibold tracking-tight text-neutral-900 mt-3 first:mt-0 mb-1">
+    <h2 className="text-base font-semibold tracking-tight text-neutral-900 mt-3 first:mt-0 mb-1 dark:text-neutral-50">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="text-sm font-semibold tracking-tight text-neutral-900 mt-2 first:mt-0 mb-1">
+    <h3 className="text-sm font-semibold tracking-tight text-neutral-900 mt-2 first:mt-0 mb-1 dark:text-neutral-50">
       {children}
     </h3>
   ),
@@ -47,18 +47,18 @@ const components: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="text-neutral-900 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-900 transition-colors break-words"
+      className="text-neutral-900 underline decoration-neutral-300 underline-offset-2 hover:decoration-neutral-900 transition-colors break-words dark:text-neutral-100 dark:decoration-neutral-600 dark:hover:decoration-neutral-100"
     >
       {children}
     </a>
   ),
   strong: ({ children }) => (
-    <strong className="font-semibold text-neutral-900">{children}</strong>
+    <strong className="font-semibold text-neutral-900 dark:text-neutral-50">{children}</strong>
   ),
   em: ({ children }) => <em className="italic">{children}</em>,
-  hr: () => <hr className="my-3 border-neutral-200" />,
+  hr: () => <hr className="my-3 border-neutral-200 dark:border-neutral-800" />,
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-neutral-300 pl-3 my-2 first:mt-0 last:mb-0 text-neutral-600 italic">
+    <blockquote className="border-l-2 border-neutral-300 pl-3 my-2 first:mt-0 last:mb-0 text-neutral-600 italic dark:border-neutral-600 dark:text-neutral-400">
       {children}
     </blockquote>
   ),
@@ -76,7 +76,7 @@ const components: Components = {
       return <CodeBlock code={text} language={match?.[1] ?? "text"} />;
     }
     return (
-      <code className="bg-neutral-200/70 rounded-md px-1.5 py-0.5 font-mono text-[0.82em] break-all">
+      <code className="bg-neutral-200/70 rounded-md px-1.5 py-0.5 font-mono text-[0.82em] break-all dark:bg-white/10">
         {children}
       </code>
     );
@@ -88,14 +88,14 @@ const components: Components = {
       </table>
     </div>
   ),
-  thead: ({ children }) => <thead className="bg-neutral-200/50">{children}</thead>,
+  thead: ({ children }) => <thead className="bg-neutral-200/50 dark:bg-white/10">{children}</thead>,
   th: ({ children }) => (
-    <th className="text-left font-semibold text-neutral-900 px-2 py-1.5 border border-neutral-200 whitespace-nowrap">
+    <th className="text-left font-semibold text-neutral-900 px-2 py-1.5 border border-neutral-200 whitespace-nowrap dark:text-neutral-50 dark:border-neutral-700">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="px-2 py-1.5 border border-neutral-200 align-top">{children}</td>
+    <td className="px-2 py-1.5 border border-neutral-200 align-top dark:border-neutral-700">{children}</td>
   ),
 };
 

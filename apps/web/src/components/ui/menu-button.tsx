@@ -3,7 +3,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Bot, Moon, Sun } from "lucide-react";
+import { Home, Bot, Moon, Shield, FileText, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { MenuToggle } from "@/components/effects/menu-toggle";
 
@@ -23,6 +23,8 @@ type MenuItem = {
 const ITEMS: MenuItem[] = [
   { label: "home", href: "/", Icon: Home },
   { label: "your agents", href: "/agents", Icon: Bot },
+  { label: "privacy policy", href: "/privacy-policy", Icon: Shield },
+  { label: "terms and conditions", href: "/terms-and-conditions", Icon: FileText },
   { label: "check me out", href: "https://x.com/josh_scriptz", Icon: XLogo, external: true },
 ];
 
@@ -45,7 +47,7 @@ export default function Menu({ className }: { className?: string }) {
     "flex items-center gap-3 px-2 py-1 rounded-xl text-sm font-medium tracking-tight text-neutral-700 hover:bg-neutral-100 hover:text-neutral-900 transition-all duration-200 active:scale-98 dark:text-neutral-300 dark:hover:bg-neutral-800 dark:hover:text-neutral-50";
 
   return (
-    <div className={`group absolute z-2000 bottom-4 right-4 ${className}`}>
+    <div className={`group fixed z-2000 bottom-4 right-4 ${className}`}>
       <AnimatePresence>
         {open && (
           <>
@@ -59,7 +61,7 @@ export default function Menu({ className }: { className?: string }) {
             />
             <motion.nav
               role="menu"
-              className="absolute bottom-20 right-0 z-2001 w-44 rounded-2xl bg-white border border-neutral-200 shadow-xl p-1.5 flex flex-col gap-0.5 dark:bg-neutral-900 dark:border-neutral-800"
+              className="absolute bottom-20 right-0 z-2001 w-48 rounded-2xl bg-white border border-neutral-200 shadow-xl p-1.5 flex flex-col gap-0.5 dark:bg-neutral-900 dark:border-neutral-800"
               initial={{ opacity: 0, scale: 0.95, y: 6 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               exit={{ opacity: 0, scale: 0.95, y: 6 }}
@@ -118,7 +120,7 @@ export default function Menu({ className }: { className?: string }) {
         strokeWidth={3}
         open={open}
         onOpenChange={setOpen}
-        className="size-16 text-neutral-400 group-hover:text-black dark:text-neutral-600 dark:group-hover:text-white"
+        className="size-10 lg:size-16 text-neutral-400 group-hover:text-black dark:text-neutral-600 dark:group-hover:text-white"
       />
     </div>
   );

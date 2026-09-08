@@ -32,7 +32,7 @@ function CopyButton({
       onClick={handleCopy}
       aria-label={label ?? `Copy ${value}`}
       className={cn(
-        'group flex items-center gap-1 rounded-full py-0.5 text-neutral-400 hover:text-neutral-600 transition-all duration-200 hover:scale-102 active:scale-98',
+        'group flex items-center gap-1 rounded-full py-0.5 text-neutral-400 hover:text-neutral-600 transition-all duration-200 hover:scale-102 active:scale-98 dark:hover:text-neutral-200',
         className
       )}
     >

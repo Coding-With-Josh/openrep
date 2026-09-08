@@ -10,7 +10,7 @@ import { BorderBeamButton } from "@/components/ui/border-beam-button";
 import { SignInModal } from "@/components/auth/sign-in-modal";
 import AgentAvatar from "@/components/ui/agent-avatar";
 import { useGuestSession } from "@/lib/session";
-import { cachedFetch, useCachedData } from "@/lib/client-cache";
+import { cachedFetch, invalidateCachePrefix, useCachedData } from "@/lib/client-cache";
 import { useTheme } from "next-themes";
 
 type AgentScore = {
@@ -61,14 +61,31 @@ const Page = () => {
   } = useGuestSession();
   const [localEmail, setLocalEmail] = useState<string | null>(null);
   const [showSignIn, setShowSignIn] = useState(false);
+  // set synchronously by the modal's sign-out handler, before next-auth
+  // client state settles, so the identity key flips on this very render and
+  // the stale list is dropped instead of lingering until the session refetch.
+  const [signedOut, setSignedOut] = useState(false);
 
-  const isSignedIn = status === "authenticated" || localEmail !== null;
-  const signedInEmail = session?.user?.email ?? localEmail;
+  const isSignedIn = !signedOut && (status === "authenticated" || localEmail !== null);
+  // the signedOut flag also gates the email shown in the account modal, so a
+  // sign-out never leaves the signed-in branch visible while next-auth state
+  // is still catching up.
+  const signedInEmail = signedOut ? null : session?.user?.email ?? localEmail;
 
-  // the api list is keyed by the server-confirmed session userId so a reload
-  // paints the cached copy instantly and the background fetch revalidates it.
+  // the cache key must mirror the identity the server will authorize for the
+  // request: the account id when signed in, the guest id when not. the
+  // signedOut flag makes a sign-out flip the key synchronously, and the
+  // previous identity's cached rows become unreachable, so the list refetches
+  // instead of re-painting them. while the account id is not yet known the
+  // key is null, which skips the fetch rather than guessing an identity.
+  const signedIn = !signedOut && (status === "authenticated" || localEmail !== null);
+  const effectiveUserId = signedIn
+    ? session?.user?.id && session.user.id.length > 0
+      ? session.user.id
+      : null
+    : guest?.userId ?? null;
   const cacheKey =
-    sessionReady && guest !== null ? `agents:${guest.userId}` : null;
+    sessionReady && effectiveUserId !== null ? `agents:${effectiveUserId}` : null;
   const {
     data: agents,
     error: loadError,
@@ -79,10 +96,15 @@ const Page = () => {
 
   const handleSignedIn = (email: string) => {
     setLocalEmail(email);
+    setSignedOut(false);
   };
 
   const handleSignedOut = () => {
     setLocalEmail(null);
+    setSignedOut(true);
+    // purge every agents list cache so the next identity's list comes from
+    // the server, never from a cache the previous identity wrote.
+    invalidateCachePrefix("agents:");
   };
 
   return (
