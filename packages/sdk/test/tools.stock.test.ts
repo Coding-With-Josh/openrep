@@ -47,9 +47,9 @@ describe("parseArxivFeed", () => {
     expect(entry.id).toBe("http://arxiv.org/abs/2501.00001v1");
     expect(entry.title).toBe("Example Paper");
     expect(entry.summary).toBe("This is the abstract of the paper.");
-    expect(entry.authors).toEqual(["Alice Example", "Bob Example"]);
+    expect(entry.authors).toBe("Alice Example, Bob Example");
     expect(entry.published).toBe("2025-01-01T00:00:00Z");
-    expect(entry.categories).toEqual(["cs.AI", "cs.CL"]);
+    expect(entry.categories).toBe("cs.AI, cs.CL");
   });
 
   it("returns no categories when the feed is empty of entries", () => {

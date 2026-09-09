@@ -182,6 +182,37 @@ describe("attest", () => {
     expect("idempotencyKey" in value).toBe(false);
   });
 
+  it("rejects a toolsUsed entry that canonicalizes alone but overflows depth inside the whole content", async () => {
+    // regression for the live web_search crash: an entry whose output nests
+    // an array three levels deep (output -> results -> result -> categories)
+    // passes the per-entry toolEntriesValid depth budget, but once wrapped in
+    // { task, output, toolsUsed } it sits one level deeper and trips
+    // canonicalize's depth-6 cap. attest() must return a typed failure, not
+    // throw a raw Error that surfaces as INTERNAL.
+    const storage = new FakeStorage();
+    storage.agents.add(PK1);
+    const toolsUsed = [
+      {
+        tool: "web_search",
+        input: { query: "new startups" },
+        output: {
+          query: "new startups",
+          total: 1,
+          count: 1,
+          results: [{ domain: "example.ai", categories: ["AI"] }],
+        },
+      },
+    ];
+    const result = await attest(validInput({ toolsUsed }), SECRET_1, storage);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("INVALID_INPUT");
+    expect(result.error.message).toMatch(/depth|canonicaliz/i);
+    // rejected during phase-1 validation: no storage read, no crypto, nothing
+    // persisted, and crucially no throw escaping the call.
+    expect(storage.calls).toEqual([]);
+  });
+
   it("performs the optimistic idempotency read before the insert when a key is given", async () => {
     const storage = new FakeStorage();
     storage.agents.add(PK1);

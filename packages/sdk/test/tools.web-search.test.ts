@@ -50,7 +50,7 @@ describe("web_search", () => {
       title: "Example: AI chatbot",
       summary: "Example is an AI chatbot platform.",
       category: "ai",
-      aiCategories: ["AI Chatbot & Assistant"],
+      categories: "AI Chatbot & Assistant",
       aiSource: "nextjs",
       domainRating: 41,
       wentLive: "2026-08-22",

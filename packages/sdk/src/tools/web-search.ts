@@ -67,9 +67,13 @@ function pickResult(result: FreeSerpResult) {
     title: typeof result.title === "string" ? clip(result.title, WEB_SEARCH_MAX_TITLE_LENGTH) : null,
     summary: typeof result.ai_summary === "string" ? clip(result.ai_summary, WEB_SEARCH_MAX_SUMMARY_LENGTH) : null,
     category: typeof result.category === "string" ? result.category : null,
-    aiCategories: Array.isArray(result.ai_categories)
-      ? result.ai_categories.filter((value): value is string => typeof value === "string")
-      : [],
+    // joined string, not an array: canonicalize's depth budget is measured
+    // from the whole { task, output, toolsUsed } attestation root, and a
+    // nested array here sits at depth 6 once wrapped in a toolsUsed entry
+    // (the live bug that blew up signing with "exceeds maximum depth of 6").
+    categories: Array.isArray(result.ai_categories)
+      ? result.ai_categories.filter((value): value is string => typeof value === "string").join(", ") || null
+      : null,
     aiSource: typeof result.ai_source === "string" ? result.ai_source : null,
     domainRating: typeof result.dr === "number" ? result.dr : null,
     wentLive: typeof result.went_live === "string" ? result.went_live : null,

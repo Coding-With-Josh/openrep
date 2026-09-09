@@ -85,10 +85,13 @@ interface ArxivResult {
   id: string;
   title: string | null;
   summary: string | null;
-  authors: string[];
+  // joined strings, not arrays: the entry output sits one level deeper than
+  // the per-entry validator measures, and a nested array in every result
+  // would overflow canonicalize's depth-6 budget at signing time.
+  authors: string;
   published: string | null;
   updated: string | null;
-  categories: string[];
+  categories: string;
 }
 
 function arxivCategories(entry: string): string[] {
@@ -113,10 +116,10 @@ export function parseArxivFeed(xml: string): ArxivResult[] {
       id: id !== null ? id : "",
       title: stripTags(title),
       summary: stripTags(summary),
-      authors: simpleXmlFields(entry, "name").map((name) => name.trim()).filter((name) => name.length > 0),
+      authors: simpleXmlFields(entry, "name").map((name) => name.trim()).filter((name) => name.length > 0).join(", "),
       published,
       updated,
-      categories: arxivCategories(entry),
+      categories: arxivCategories(entry).join(", "),
     };
   });
 }

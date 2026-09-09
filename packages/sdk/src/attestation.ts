@@ -133,6 +133,22 @@ function validateAttestationContent(content: ContentToValidate): ContentCheckRes
       message: `toolsUsed exceeds ${MAX_TOOLS_USED_ENTRIES} entries, a tool name of ${MAX_TOOL_NAME_LENGTH} characters, or an entry of ${MAX_TOOL_ENTRY_SERIALIZED_LENGTH} canonical characters per entry`,
     };
   }
+  // the whole content, not just each entry in isolation, must canonicalize:
+  // the signing core hashes { task, output, toolsUsed } as one unit and
+  // canonicalize's depth budget is measured from that root. an entry that
+  // passes toolEntriesValid standalone still overflows the budget once it
+  // sits one level deeper inside toolsUsed (a nested array in a tool output
+  // is exactly the live depth-6 crash), so validation re-runs the same
+  // canonicalization the signer will perform and converts a depth or cycle
+  // failure into the typed "invalid" path instead of an uncaught throw.
+  try {
+    canonicalize({ task: content.task, output: content.output, toolsUsed: toolsChecked });
+  } catch {
+    return {
+      kind: "invalid",
+      message: "attestation content is not canonicalizable: nested values exceed the depth budget or contain a cycle",
+    };
+  }
   return { kind: "valid", toolsUsed: toolsChecked };
 }
 
@@ -332,7 +348,19 @@ async function signAndPersistAttestation(
   // the signed-bytes invariant: canonicalize stays exactly
   // { task, output, toolsUsed }, locked by a dedicated test. sign over the
   // sha-256 content hash bytes, not the raw canonical text, per the plan.
-  const canonical = canonicalize({ task: params.task, output: params.output, toolsUsed: params.toolsUsed });
+  // the validator re-checks this same canonicalization, so reaching here
+  // means a future code path skipped validation; fail closed as a typed
+  // error instead of letting a depth or cycle throw escape as an anonymous
+  // INTERNAL failure (the live web_search depth-6 crash path).
+  let canonical: string;
+  try {
+    canonical = canonicalize({ task: params.task, output: params.output, toolsUsed: params.toolsUsed });
+  } catch {
+    return failure(
+      "INVALID_INPUT",
+      "attestation content is not canonicalizable: nested values exceed the depth budget or contain a cycle",
+    );
+  }
   const contentHash = createHash("sha256").update(canonical, "utf8").digest("hex");
   const signature = bytesToHex(await signAsync(hexToBytes(contentHash), hexToBytes(signingKey)));
   const timestamp = params.timestamp;
