@@ -16,6 +16,7 @@
     "@swup/head-plugin": "^2.3.1",
     "@swup/parallel-plugin": "^0.4.0",
     "@swup/preload-plugin": "^3.2.12",
+    "@vercel/analytics": "^2.0.1",
     "border-beam": "^1.3.0",
     "button": "link:@base-ui/react/button",
     "class-variance-authority": "^0.7.1",
