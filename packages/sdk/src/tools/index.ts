@@ -10,6 +10,7 @@ import { calculatorTool } from "./calculator.js";
 import { weatherTool } from "./weather.js";
 import { packageInfoTool } from "./package-info.js";
 import { knowledgeTools } from "./knowledge.js";
+import { webSearchTool } from "./web-search.js";
 import { createStorageTools } from "./storage-tools.js";
 
 export interface StockToolset {
@@ -24,6 +25,7 @@ export function createStockToolset(deps: { storage: StorageAdapter }): StockTool
     ...weatherTool,
     ...packageInfoTool,
     ...knowledgeTools,
+    ...webSearchTool,
     ...createStorageTools(deps.storage),
   ];
   const definitions: ToolDefinition[] = [];
@@ -45,6 +47,7 @@ export const STOCK_TOOL_NAMES: readonly string[] = [
   "package_info",
   "hacker_news_lookup",
   "arxiv_search",
+  "web_search",
   "self_reputation",
   "lookup_agent",
   "verify_attestation",

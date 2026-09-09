@@ -93,6 +93,7 @@ describe("createStockToolset", () => {
       "package_info",
       "hacker_news_lookup",
       "arxiv_search",
+      "web_search",
       "self_reputation",
       "lookup_agent",
       "verify_attestation",
