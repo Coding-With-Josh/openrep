@@ -38,6 +38,19 @@ export type SafeFetchDeps = {
   lookupImpl?: (hostname: string) => Promise<readonly string[]>;
 };
 
+export interface SafeFetchOptions {
+  timeoutMs?: number;
+  maxBytes?: number;
+  maxRedirects?: number;
+  // custom request headers for the initial request and any same-origin
+  // redirect hop. they are deliberately STRIPPED on a redirect to a
+  // different origin, so a credential placed here (an Authorization bearer
+  // token) can never be forwarded to a third party the upstream server
+  // chose to redirect to. the same gates (public-ip check, redirect
+  // re-gating, body cap, timeout) apply identically with or without them.
+  headers?: Readonly<Record<string, string>>;
+}
+
 export interface SafeFetchResult {
   status: number;
   body: string;
@@ -258,15 +271,23 @@ async function readBoundedBody(
 
 export async function safeFetch(
   url: string,
-  options: { timeoutMs?: number; maxBytes?: number; maxRedirects?: number } = {},
+  options: SafeFetchOptions = {},
   deps: SafeFetchDeps = {},
 ): Promise<SafeFetchResult> {
   const timeoutMs = options.timeoutMs ?? TOOL_FETCH_TIMEOUT_MS;
   const maxBytes = options.maxBytes ?? TOOL_MAX_RESPONSE_BYTES;
   const maxRedirects = options.maxRedirects ?? TOOL_MAX_REDIRECTS;
+  const customHeaders = options.headers;
   const fetchImpl = deps.fetchImpl ?? globalThis.fetch;
 
   let current = await assertPublicUrl(url, deps);
+  // the credential-scope baseline: custom headers (Authorization bearer
+  // tokens and the like) may only leave the process toward the origin the
+  // caller asked for. every redirect hop compares against this origin and
+  // drops them the moment a different origin appears, so an upstream 3xx to
+  // an attacker-controlled host cannot carry the token with it (see the
+  // cross-origin redirect test in tools.guards.test.ts).
+  const originalOrigin = current.origin;
   let redirects = 0;
   for (;;) {
     const controller = new AbortController();
@@ -277,10 +298,16 @@ export async function safeFetch(
     try {
       let response: Response;
       try {
+        const requestHeaders: Record<string, string> = { "user-agent": "openrep-tool/0.1" };
+        if (customHeaders !== undefined && current.origin === originalOrigin) {
+          for (const [name, value] of Object.entries(customHeaders)) {
+            requestHeaders[name] = value;
+          }
+        }
         response = await fetchImpl(current.toString(), {
           redirect: "manual",
           signal: controller.signal,
-          headers: { "user-agent": "openrep-tool/0.1" },
+          headers: requestHeaders,
         });
       } catch (error) {
         if (error instanceof ToolError) throw error;

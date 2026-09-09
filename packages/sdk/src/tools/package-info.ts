@@ -2,7 +2,13 @@
 // responses are json, read through the ssrf guard; the package name is
 // restricted to slug characters before it is ever interpolated into a url.
 import type { ToolDefinition, ToolImplementation } from "../types/providers.js";
-import { readJsonBody, safeFetch, ToolError } from "./guards.js";
+import {
+  readJsonBody,
+  safeFetch,
+  ToolError,
+  type SafeFetchDeps,
+  type SafeFetchResult,
+} from "./guards.js";
 
 const NPM_REGISTRY_ORIGIN = "https://registry.npmjs.org";
 const PYPI_ORIGIN = "https://pypi.org";
@@ -30,9 +36,9 @@ function normalizeRepo(raw: string): { owner: string; repo: string } {
   return { owner: parts[0], repo: parts[1] };
 }
 
-async function lookupNpm(name: string) {
+async function lookupNpm(name: string, deps: SafeFetchDeps = {}) {
   const url = `${NPM_REGISTRY_ORIGIN}/${encodeURIComponent(name)}`;
-  const result = await safeFetch(url);
+  const result = await safeFetch(url, {}, deps);
   if (result.status !== 200) {
     throw new ToolError(`npm returned status ${result.status} for ${name}`);
   }
@@ -66,9 +72,9 @@ async function lookupNpm(name: string) {
   };
 }
 
-async function lookupPypi(name: string) {
+async function lookupPypi(name: string, deps: SafeFetchDeps = {}) {
   const url = `${PYPI_ORIGIN}/pypi/${encodeURIComponent(name)}/json`;
-  const result = await safeFetch(url);
+  const result = await safeFetch(url, {}, deps);
   if (result.status !== 200) {
     throw new ToolError(`pypi returned status ${result.status} for ${name}`);
   }
@@ -99,9 +105,43 @@ async function lookupPypi(name: string) {
   };
 }
 
-async function lookupGithub(owner: string, repo: string) {
+function readGitHubToken(): string | null {
+  // caller-resolved tool config, deliberately not an sdk EnvConfig field
+  // (same reasoning as the provider keys). read at request-build time so a
+  // rotated or newly-provided token takes effect on the next lookup and a
+  // stale token is never cached.
+  const raw = process.env.OPENREP_GITHUB_TOKEN;
+  if (raw === undefined) return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+async function lookupGithub(owner: string, repo: string, deps: SafeFetchDeps = {}) {
   const url = `${GITHUB_API_ORIGIN}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
-  const result = await safeFetch(url);
+  // rate-limit-only authentication, never account scoping: the token is a
+  // fine-grained pat with "public repositories, read-only" access. it
+  // authenticates the request for github's rate-limit accounting, grants no
+  // private data, and does NOT restrict lookups to this account's repos:
+  // any public repo is lookup-able exactly as in the unauthenticated path.
+  // the token is never logged, never included in an error message, and
+  // never part of tool output; safeFetch additionally scopes it to
+  // same-origin hops only, so a redirect cannot carry it to another host.
+  const token = readGitHubToken();
+  const headers = token === null ? undefined : { authorization: `Bearer ${token}` };
+  let result: SafeFetchResult;
+  try {
+    result = await safeFetch(url, { headers }, deps);
+  } catch (error) {
+    // defense in depth: if a pathological upstream error echoes the token
+    // into its own message, drop the details rather than let the value
+    // surface in logs or attestation evidence through the generic
+    // fetch-failed formatting.
+    const message = error instanceof Error ? error.message : String(error);
+    if (token !== null && message.includes(token)) {
+      throw new ToolError("github api request failed (error details suppressed to protect a credential)");
+    }
+    throw error;
+  }
   if (result.status === 404) {
     throw new ToolError(`github repo ${owner}/${repo} not found`);
   }
@@ -143,6 +183,13 @@ const packageInfoDefinition: ToolDefinition = {
 };
 
 const packageInfoImplementation: ToolImplementation = async (args: unknown) => {
+  return runPackageInfo(args);
+};
+
+// the runnable core takes injectable fetch/lookup deps so tests can stub
+// the network deterministically (same pattern as runWebSearch); the
+// registered implementation above uses the real node defaults.
+export async function runPackageInfo(args: unknown, deps: SafeFetchDeps = {}): Promise<unknown> {
   const { name, source } = args as { name?: unknown; source?: unknown };
   const givenSource = typeof source === "string" ? source.trim().toLowerCase() : "auto";
   const rawName = typeof name === "string" ? name : "";
@@ -151,29 +198,29 @@ const packageInfoImplementation: ToolImplementation = async (args: unknown) => {
   }
 
   if (givenSource === "npm") {
-    return lookupNpm(normalizeSlug(rawName, "npm package name"));
+    return lookupNpm(normalizeSlug(rawName, "npm package name"), deps);
   }
   if (givenSource === "pypi") {
-    return lookupPypi(normalizeSlug(rawName, "pypi package name"));
+    return lookupPypi(normalizeSlug(rawName, "pypi package name"), deps);
   }
   if (givenSource === "github") {
     const { owner, repo } = normalizeRepo(rawName);
-    return lookupGithub(owner, repo);
+    return lookupGithub(owner, repo, deps);
   }
   if (givenSource === "auto") {
     if (rawName.includes("/")) {
       const { owner, repo } = normalizeRepo(rawName);
-      return lookupGithub(owner, repo);
+      return lookupGithub(owner, repo, deps);
     }
     const slug = normalizeSlug(rawName, "package name");
     try {
-      return await lookupNpm(slug);
+      return await lookupNpm(slug, deps);
     } catch {
-      return lookupPypi(slug);
+      return lookupPypi(slug, deps);
     }
   }
   throw new ToolError(`unknown package source "${givenSource}" (expected npm, pypi, or github)`);
-};
+}
 
 export const packageInfoTool: readonly { definition: ToolDefinition; implementation: ToolImplementation }[] = [
   { definition: packageInfoDefinition, implementation: packageInfoImplementation },

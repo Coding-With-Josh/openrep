@@ -142,4 +142,64 @@ describe("safeFetch", () => {
       safeFetch("https://example.com/", { timeoutMs: 25 }, { fetchImpl, lookupImpl: PUBLIC_LOOKUP }),
     ).rejects.toThrow("timed out");
   });
+
+  it("strips custom headers on a cross-origin redirect so a credential cannot leak", async () => {
+    // credential hygiene: an Authorization bearer token attached by the
+    // caller must never be forwarded to a different origin the upstream
+    // server decides to redirect to.
+    const REDIRECT_LOOKUP = async (hostname: string): Promise<readonly string[]> => {
+      if (hostname === "example.com") return ["93.184.216.34"];
+      if (hostname === "redirect.example") return ["93.184.216.35"];
+      throw new Error(`no such host ${hostname}`);
+    };
+    const seen: { url: string; headers?: HeadersInit }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = String(input);
+      seen.push({ url: raw, headers: init?.headers });
+      if (raw === "https://example.com/start") {
+        return new Response(null, { status: 302, headers: { location: "https://redirect.example/target" } });
+      }
+      if (raw === "https://redirect.example/target") {
+        return new Response("ok", { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${raw}`);
+    }) as typeof fetch;
+
+    const result = await safeFetch(
+      "https://example.com/start",
+      { headers: { authorization: "Bearer top-secret" } },
+      { fetchImpl, lookupImpl: REDIRECT_LOOKUP },
+    );
+    expect(result.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect((seen[0].headers as Record<string, string>).authorization).toBe("Bearer top-secret");
+    // the second hop still rides the same gates (public-ip re-check) but
+    // carries no custom headers, only the standard user-agent.
+    expect((seen[1].headers as Record<string, string>).authorization).toBeUndefined();
+    expect((seen[1].headers as Record<string, string>)["user-agent"]).toBe("openrep-tool/0.1");
+  });
+
+  it("keeps custom headers on a same-origin redirect", async () => {
+    const seen: { url: string; headers?: HeadersInit }[] = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const raw = String(input);
+      seen.push({ url: raw, headers: init?.headers });
+      if (raw === "https://example.com/start") {
+        return new Response(null, { status: 301, headers: { location: "https://example.com/target" } });
+      }
+      if (raw === "https://example.com/target") {
+        return new Response("ok", { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${raw}`);
+    }) as typeof fetch;
+
+    const result = await safeFetch(
+      "https://example.com/start",
+      { headers: { authorization: "Bearer top-secret" } },
+      { fetchImpl, lookupImpl: PUBLIC_LOOKUP },
+    );
+    expect(result.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect((seen[1].headers as Record<string, string>).authorization).toBe("Bearer top-secret");
+  });
 });
