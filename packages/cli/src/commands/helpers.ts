@@ -1,7 +1,7 @@
 // tiny cross-command helpers: turning sdk failures and custody failures into
 // the cli's "<CODE>: <message>" stderr contract.
 
-import type { OpenRepError } from "@openrep/sdk";
+import type { OpenRepError } from "@openrepso/sdk";
 
 import { cliError, fail } from "../cli-error.js";
 import { CustodyError } from "../custody/types.js";

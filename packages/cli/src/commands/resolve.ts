@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { resolve } from "@openrep/sdk";
+import { resolve } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { failSdkError, failSdkCode } from "./helpers.js";

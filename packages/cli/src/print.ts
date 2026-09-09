@@ -2,7 +2,7 @@
 // and ingest print machine readable json instead, so pipelines can consume
 // signed records; score/resolve are meant for eyeballs.
 
-import type { AgentScore, ResolvedManifest } from "@openrep/sdk";
+import type { AgentScore, ResolvedManifest } from "@openrepso/sdk";
 
 export function printScoreBlock(publicKey: string, name: string, score: AgentScore): void {
   console.log(`agent:      ${publicKey}`);

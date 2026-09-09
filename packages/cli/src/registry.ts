@@ -9,7 +9,7 @@
 // UNKNOWN_SOURCE: "no adapter registered for source <name>", never a
 // placeholder adapter pretending to understand a platform it does not.
 
-import type { SourceAdapter } from "@openrep/sdk";
+import type { SourceAdapter } from "@openrepso/sdk";
 
 const adapters: Record<string, SourceAdapter> = {};
 

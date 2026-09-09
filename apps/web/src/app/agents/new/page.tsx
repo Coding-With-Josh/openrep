@@ -9,7 +9,7 @@ import AgentAvatar from '@/components/ui/agent-avatar';
 import { useGuestSession } from '@/lib/session';
 import { invalidateCachePrefix } from '@/lib/client-cache';
 
-import { generateNameBatch } from "@openrep/sdk/names";
+import { generateNameBatch } from "@openrepso/sdk/names";
 
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 

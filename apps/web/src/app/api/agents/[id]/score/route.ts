@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { getScore, verifyAttestation, verifyManifest, type AgentManifest } from "@openrep/sdk";
+import { getScore, verifyAttestation, verifyManifest, type AgentManifest } from "@openrepso/sdk";
 import { errorResponse, jsonResponse } from "@/server/error";
 import { codedError, requireSession } from "@/server/http";
 import { createRequestContext } from "@/server/storage";

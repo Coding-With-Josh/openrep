@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { SCORE_PAGE_LIMIT, verifyAttestation, verifyManifest, type AgentManifest } from "@openrep/sdk";
+import { SCORE_PAGE_LIMIT, verifyAttestation, verifyManifest, type AgentManifest } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { resolveAgentRef } from "../agent-ref.js";

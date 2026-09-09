@@ -1,4 +1,4 @@
-import { loadEnvConfig, type EnvConfig } from "@openrep/sdk";
+import { loadEnvConfig, type EnvConfig } from "@openrepso/sdk";
 
 const DEFAULT_SESSION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 

@@ -60,7 +60,7 @@ for a hosted deployment set the vars in `apps/web/.env.example`: `TURSO_DATABASE
 ### sdk
 
 ```ts
-import { createAgent, attest, getScore, getSqliteStorage } from "@openrep/sdk";
+import { createAgent, attest, getScore, getSqliteStorage } from "@openrepso/sdk";
 
 const storage = getSqliteStorage(":memory:"); // or a file path
 
@@ -85,7 +85,7 @@ const score = await getScore(agent.publicKey, storage);
 ### cli
 
 ```bash
-pnpm add -g @openrep/cli
+pnpm add -g @openrepso/cli
 
 openrep create
 openrep attest -a beautiful-pig-black.agent -t "fixed the flaky test" -o "passed 42/42"

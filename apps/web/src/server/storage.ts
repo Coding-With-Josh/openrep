@@ -4,7 +4,7 @@ import {
   getSqliteStorage,
   type SessionKeyBackend,
   type StorageAdapter,
-} from "@openrep/sdk";
+} from "@openrepso/sdk";
 import { getServerConfig } from "./config";
 
 export interface RequestContext {

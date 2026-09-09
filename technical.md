@@ -6,15 +6,15 @@ this is a reference document for anyone picking this codebase back up, including
 
 openrep is a pnpm monorepo with three packages.
 
-- `packages/sdk`, published as `@openrep/sdk`. the core library. plain typescript, no framework, no react, no next. it owns the identity model, the attestation model, score calculation, ingestion, and resolution. everything that matters lives here so it can be reused by every surface without duplicating logic.
-- `packages/cli`, published as `@openrep/cli`. a commander based command line tool. it depends on `@openrep/sdk` and exists for developers who want to script openrep into pipelines, ci checks, or their own agent tooling without a browser. every command is a thin wrapper around an sdk function.
-- `apps/web`, named `web` in the workspace. a next.js app router application using typescript and tailwind. it also depends on `@openrep/sdk`. it is the human facing product: create agents, chat with them, watch reputation build live.
+- `packages/sdk`, published as `@openrepso/sdk`. the core library. plain typescript, no framework, no react, no next. it owns the identity model, the attestation model, score calculation, ingestion, and resolution. everything that matters lives here so it can be reused by every surface without duplicating logic.
+- `packages/cli`, published as `@openrepso/cli`. a commander based command line tool. it depends on `@openrepso/sdk` and exists for developers who want to script openrep into pipelines, ci checks, or their own agent tooling without a browser. every command is a thin wrapper around an sdk function.
+- `apps/web`, named `web` in the workspace. a next.js app router application using typescript and tailwind. it also depends on `@openrepso/sdk`. it is the human facing product: create agents, chat with them, watch reputation build live.
 
 the dependency graph is a simple chain. the sdk depends on nothing local. the cli depends on the sdk. the web app depends on the sdk. nothing depends on the web app or the cli. that keeps the sdk the single source of truth for all reputation logic.
 
 it is structured as a monorepo for two reasons. first, the sdk, cli, and web app all need to share the exact same types and logic, and a local workspace link means they compile against the same source rather than against a published copy that can drift. second, the sdk is small and pure, so keeping it as its own package means it can be published on its own later without dragging in react or next.
 
-workspace links are handled by pnpm through the workspace protocol. both the cli and web app declare `"@openrep/sdk": "workspace:*"`, and pnpm creates a symlink from each of their `node_modules` to `packages/sdk`. the root `pnpm-workspace.yaml` lists `packages/*` and `apps/*` as the package globs. root scripts: `pnpm dev` runs the web app, `pnpm build` builds every workspace with `pnpm -r build`.
+workspace links are handled by pnpm through the workspace protocol. both the cli and web app declare `"@openrepso/sdk": "workspace:*"`, and pnpm creates a symlink from each of their `node_modules` to `packages/sdk`. the root `pnpm-workspace.yaml` lists `packages/*` and `apps/*` as the package globs. root scripts: `pnpm dev` runs the web app, `pnpm build` builds every workspace with `pnpm -r build`.
 
 ## identity model
 
@@ -172,7 +172,7 @@ the `ActivityEvent` type in `types/activity.ts` includes an `agent_created` vari
 
 ## the web app
 
-the web app is a next.js app router application that imports `@openrep/sdk`. because the sdk is plain typescript with no server dependency at runtime, it can run on the server, and that is where the reputation state should live.
+the web app is a next.js app router application that imports `@openrepso/sdk`. because the sdk is plain typescript with no server dependency at runtime, it can run on the server, and that is where the reputation state should live.
 
 the setup keeps the sdk on the server side, behind next.js api routes or server actions. the flow is: the server imports the sdk, and the client browser components never hold the private keys. a user creates an agent through a server call that runs `createAgent` and returns the public manifest and a handle. the private key stays server side, tied to the session or the agent record. letting private keys reach the browser would defeat the whole signing model, so the boundary between client and server is also a trust boundary.
 

@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { attest, type ToolCall } from "@openrep/sdk";
+import { attest, type ToolCall } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { resolveAgentRef } from "../agent-ref.js";

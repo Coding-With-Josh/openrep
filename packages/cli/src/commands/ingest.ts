@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { Command } from "commander";
-import { ingest, type ExternalAttestation } from "@openrep/sdk";
+import { ingest, type ExternalAttestation } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { resolveAgentRef } from "../agent-ref.js";

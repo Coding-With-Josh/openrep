@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { canonicalize, revokeAgent } from "@openrep/sdk";
+import { canonicalize, revokeAgent } from "@openrepso/sdk";
 import { signAsync } from "@noble/ed25519";
 
 import type { CliContext } from "../context.js";

@@ -1,7 +1,7 @@
 // wiring context: one storage connection + one custody resolver per cli
 // invocation, built from the resolved environment.
 
-import { createSqliteStorage, type StorageAdapter } from "@openrep/sdk";
+import { createSqliteStorage, type StorageAdapter } from "@openrepso/sdk";
 
 import { ensureDbParent, resolveEnv, type CliEnv } from "./config.js";
 import { createCustody, type Custody } from "./custody/index.js";

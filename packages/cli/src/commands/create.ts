@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { createAgent } from "@openrep/sdk";
+import { createAgent } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { failSdkError, handleCustodyError } from "./helpers.js";

@@ -17,7 +17,7 @@
 // key means the store itself is damaged.
 
 import { mkdirSync } from "node:fs";
-import type { AgentIdentity } from "@openrep/sdk";
+import type { AgentIdentity } from "@openrepso/sdk";
 
 import { defaultCredentialsFilePath, openrepHomeDir, type CliEnv } from "../config.js";
 import { isEd25519PrivateKeyHex } from "../hex.js";

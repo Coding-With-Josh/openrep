@@ -1,5 +1,5 @@
 {
-  "name": "@openrep/sdk",
+  "name": "@openrepso/sdk",
   "version": "0.1.0",
   "description": "Core library for OpenRep — a platform-agnostic reputation layer for AI agents",
   "type": "module",

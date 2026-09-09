@@ -6,7 +6,7 @@ import {
   getScore,
   wrapAgent,
   type AgentConfig,
-} from "@openrep/sdk";
+} from "@openrepso/sdk";
 import { getServerConfig } from "@/server/config";
 import { errorResponse, jsonResponse } from "@/server/error";
 import { codedError, readJsonBody, requireSession } from "@/server/http";

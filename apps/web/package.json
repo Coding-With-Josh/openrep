@@ -12,7 +12,7 @@
     "@base-ui/react": "^1.8.0",
     "@dicebear/collection": "^9.4.3",
     "@dicebear/core": "^9.4.3",
-    "@openrep/sdk": "workspace:*",
+    "@openrepso/sdk": "workspace:*",
     "@swup/head-plugin": "^2.3.1",
     "@swup/parallel-plugin": "^0.4.0",
     "@swup/preload-plugin": "^3.2.12",

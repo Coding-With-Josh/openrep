@@ -1,5 +1,5 @@
 {
-  "name": "@openrep/cli",
+  "name": "@openrepso/cli",
   "version": "0.1.0",
   "description": "First-class CLI for OpenRep, the pipeline-friendly agent reputation management layer",
   "type": "module",
@@ -30,7 +30,7 @@
     "url": "https://github.com/Coding-With-Josh/openrep.git"
   },
   "dependencies": {
-    "@openrep/sdk": "workspace:^",
+    "@openrepso/sdk": "workspace:^",
     "@noble/ed25519": "^3.2.0",
     "commander": "^13.1.0"
   },

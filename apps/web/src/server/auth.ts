@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
-import type { AccountLink, UserRecord } from "@openrep/sdk";
+import type { AccountLink, UserRecord } from "@openrepso/sdk";
 import { getServerConfig } from "./config";
 import { hashPassword, isPasswordWithinPolicy, verifyPassword } from "./password";
 import { SESSION_COOKIE, verifySessionToken } from "./session";

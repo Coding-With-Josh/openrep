@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
-import { getScore } from "@openrep/sdk";
+import { getScore } from "@openrepso/sdk";
 import { createRequestContext } from "@/server/storage";
 import AgentAvatar from "@/components/ui/agent-avatar";
 

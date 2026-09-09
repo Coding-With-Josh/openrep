@@ -1,4 +1,4 @@
-import type { AgentManifest, AgentScore, Attestation } from "@openrep/sdk";
+import type { AgentManifest, AgentScore, Attestation } from "@openrepso/sdk";
 
 // a browser session or user, distinct from an agent. one user owns multiple
 // agents.

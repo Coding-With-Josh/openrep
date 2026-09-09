@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { getScore } from "@openrep/sdk";
+import { getScore } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { resolveAgentRef } from "../agent-ref.js";
