@@ -121,10 +121,15 @@ export type OpenRepErrorCode =
 
 // a typed error value, the error half of Result<T>. plain data so it can
 // cross module and package boundaries safely. never includes secrets or
-// stack traces.
+// stack traces. status and retryAfterSeconds are set only when the failure
+// came from a provider http response that carried real values; the web
+// layer uses them to surface a provider 429 as a retryable 429 instead of
+// a blanket 502.
 export interface OpenRepError {
   code: OpenRepErrorCode;
   message: string;
+  status?: number;
+  retryAfterSeconds?: number;
 }
 
 // the standard result shape for every function that can meaningfully fail.
@@ -141,8 +146,12 @@ export function ok<T>(value: T): Result<T> {
   return { ok: true, value };
 }
 
-export function failure<T = never>(code: OpenRepErrorCode, message: string): Result<T> {
-  return { ok: false, error: { code, message } };
+export function failure<T = never>(
+  code: OpenRepErrorCode,
+  message: string,
+  extra?: { status?: number; retryAfterSeconds?: number },
+): Result<T> {
+  return { ok: false, error: extra === undefined ? { code, message } : { code, message, ...extra } };
 }
 
 // outcome of a signature or integrity check. reason is populated when valid

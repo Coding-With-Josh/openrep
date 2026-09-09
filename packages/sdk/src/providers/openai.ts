@@ -13,7 +13,7 @@
 
 import type { AgentConfig, ModelProvider, ProviderMessage, ProviderResponse, ProviderClient } from "../types/providers.js";
 import { OPENAI_API_URL } from "./shared.js";
-import { isAbortError, ProviderApiError } from "./errors.js";
+import { isAbortError, ProviderApiError, retryAfterSeconds } from "./errors.js";
 
 // normalize a caller-supplied base url to the full chat-completions
 // endpoint. deterministic and additive only: a value already ending in
@@ -94,7 +94,7 @@ class OpenAiChatCore implements ProviderClient {
     }
 
     if (!response.ok) {
-      throw new ProviderApiError(`${this.label} api error ${response.status}`);
+      throw new ProviderApiError(`${this.label} api error ${response.status}`, response.status, retryAfterSeconds(response));
     }
 
     let json: unknown;

@@ -17,7 +17,7 @@
 //     fields through the normalized message model unchanged.
 
 import type { AgentConfig, ProviderMessage, ProviderResponse, ProviderClient } from "../types/providers.js";
-import { isAbortError, ProviderApiError } from "./errors.js";
+import { isAbortError, ProviderApiError, retryAfterSeconds } from "./errors.js";
 
 export const GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models";
 
@@ -79,7 +79,7 @@ export class GeminiClient implements ProviderClient {
     }
 
     if (!response.ok) {
-      throw new ProviderApiError(`gemini api error ${response.status}`);
+      throw new ProviderApiError(`gemini api error ${response.status}`, response.status, retryAfterSeconds(response));
     }
 
     let json: unknown;

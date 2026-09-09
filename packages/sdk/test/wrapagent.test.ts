@@ -305,6 +305,7 @@ describe("wrapAgent with the real adapter over a stubbed fetch", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.code).toBe("PROVIDER_API_FAILURE");
+    expect(result.error.status).toBe(429); // provider rate limit stays retryable, not a blanket 502
     expect(await attestationCount(storage, agent.publicKey)).toBe(0); // provider failure never attests
   });
 

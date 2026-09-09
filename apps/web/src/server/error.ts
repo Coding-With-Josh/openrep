@@ -40,9 +40,24 @@ export function errorResponse(err: unknown): NextResponse {
   const e = (typeof err === "object" && err !== null ? err : null) as {
     code?: unknown;
     message?: unknown;
+    status?: unknown;
+    retryAfterSeconds?: unknown;
   } | null;
   const code = e !== null && typeof e.code === "string" ? e.code : "INTERNAL";
-  const status = SDK_STATUS[code] ?? 500;
-  const message = e !== null && typeof e.message === "string" && code in SDK_STATUS ? e.message : "internal server error";
-  return jsonResponse({ error: { code, message } }, status);
+  const status =
+    e !== null &&
+    code === "PROVIDER_API_FAILURE" &&
+    e.status === 429
+      ? 429
+      : (SDK_STATUS[code] ?? 500);
+  let message = e !== null && typeof e.message === "string" && code in SDK_STATUS ? e.message : "internal server error";
+  if (status === 429 && code === "PROVIDER_API_FAILURE") {
+    message = "the model provider is rate limiting requests right now; wait a moment and try again";
+  }
+  const response = jsonResponse({ error: { code, message } }, status);
+  if (status === 429) {
+    const retryAfter = e !== null && typeof e.retryAfterSeconds === "number" ? e.retryAfterSeconds : 5;
+    response.headers.set("Retry-After", String(retryAfter));
+  }
+  return response;
 }

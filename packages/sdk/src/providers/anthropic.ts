@@ -6,7 +6,7 @@
 
 import type { AgentConfig, ProviderMessage, ProviderResponse, ProviderClient } from "../types/providers.js";
 import { ANTHROPIC_API_URL, toolPayload, toTextMessages } from "./shared.js";
-import { isAbortError, ProviderApiError } from "./errors.js";
+import { isAbortError, ProviderApiError, retryAfterSeconds } from "./errors.js";
 
 // anthropic's messages api model id is supplied by the caller in
 // AgentConfig.model, so the adapter itself is stateless beyond the api key.
@@ -54,7 +54,7 @@ export class AnthropicClient implements ProviderClient {
     }
 
     if (!response.ok) {
-      throw new ProviderApiError(`anthropic api error ${response.status}`);
+      throw new ProviderApiError(`anthropic api error ${response.status}`, response.status, retryAfterSeconds(response));
     }
 
     let json: unknown;

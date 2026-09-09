@@ -8,6 +8,7 @@ import {
   GeminiClient,
   OpenAiClient,
   OpenAiCompatibleClient,
+  ProviderApiError,
   createProviderClient,
 } from "../src/index.js";
 import type { ProviderMessage } from "../src/index.js";
@@ -15,12 +16,13 @@ import { geminiConfigFixture, openAiCompatibleConfigFixture, openAiConfigFixture
 
 const abortController = new AbortController();
 
-function stubFetch(response: unknown, ok = true, status = 200) {
+function stubFetch(response: unknown, ok = true, status = 200, headers: Record<string, string> = {}) {
   return vi.stubGlobal(
     "fetch",
     vi.fn(async () => ({
       ok,
       status,
+      headers: { get: (name: string) => headers[name] ?? null },
       async json() {
         return response;
       },
@@ -71,12 +73,17 @@ describe("anthropic adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  it("throws ProviderApiError on a non-2xx status", async () => {
+  it("throws ProviderApiError carrying the http status on a non-2xx response", async () => {
     stubFetch({ error: { message: "nope" } }, false, 429);
     const client = new AnthropicClient("sk-ant-test");
-    await expect(
-      client.complete([{ role: "user", content: "hi" }], abortController.signal, sampleConfigFixture),
-    ).rejects.toThrow(/anthropic api error 429/);
+    const error = await client
+      .complete([{ role: "user", content: "hi" }], abortController.signal, sampleConfigFixture)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(ProviderApiError);
+    expect(error).toMatchObject({ message: expect.stringMatching(/anthropic api error 429/), status: 429 });
     vi.unstubAllGlobals();
   });
 });
@@ -118,12 +125,43 @@ describe("openai adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  it("throws ProviderApiError on a non-2xx status", async () => {
+  it("throws ProviderApiError carrying the http status on a non-2xx response", async () => {
     stubFetch({ error: { message: "rate limited" } }, false, 429);
     const client = new OpenAiClient("sk-open-test");
-    await expect(
-      client.complete([{ role: "user", content: "hi" }], abortController.signal, sampleConfigFixture),
-    ).rejects.toThrow(/openai api error 429/);
+    const error = await client
+      .complete([{ role: "user", content: "hi" }], abortController.signal, sampleConfigFixture)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(ProviderApiError);
+    expect(error).toMatchObject({ message: expect.stringMatching(/openai api error 429/), status: 429 });
+    vi.unstubAllGlobals();
+  });
+
+  it("parses retry-after into retryAfterSeconds and ignores unparseable values", async () => {
+    stubFetch({ error: { message: "slow down" } }, false, 429, { "retry-after": "3" });
+    const client = new OpenAiClient("sk-open-test");
+    const error = await client
+      .complete([{ role: "user", content: "hi" }], abortController.signal, sampleConfigFixture)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(ProviderApiError);
+    expect(error).toMatchObject({ status: 429, retryAfterSeconds: 3 });
+    vi.unstubAllGlobals();
+
+    stubFetch({ error: { message: "slow down" } }, false, 429, { "retry-after": "not a number" });
+    const error2 = await client
+      .complete([{ role: "user", content: "hi" }], abortController.signal, sampleConfigFixture)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error2).toBeInstanceOf(ProviderApiError);
+    expect(error2).toMatchObject({ status: 429 });
+    expect((error2 as { retryAfterSeconds?: number }).retryAfterSeconds).toBeUndefined();
     vi.unstubAllGlobals();
   });
 });
@@ -251,12 +289,17 @@ describe("gemini adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  it("throws ProviderApiError on a non-2xx status", async () => {
+  it("throws ProviderApiError carrying the http status on a non-2xx response", async () => {
     stubFetch({ error: { message: "rate limited" } }, false, 429);
     const client = new GeminiClient("sk-gem-test");
-    await expect(
-      client.complete([{ role: "user", content: "hi" }], abortController.signal, geminiConfigFixture),
-    ).rejects.toThrow(/gemini api error 429/);
+    const error = await client
+      .complete([{ role: "user", content: "hi" }], abortController.signal, geminiConfigFixture)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(ProviderApiError);
+    expect(error).toMatchObject({ message: expect.stringMatching(/gemini api error 429/), status: 429 });
     vi.unstubAllGlobals();
   });
 
@@ -336,12 +379,20 @@ describe("openai-compatible adapter", () => {
     vi.unstubAllGlobals();
   });
 
-  it("throws ProviderApiError on a non-2xx status with a provider-specific label", async () => {
+  it("throws ProviderApiError carrying the http status on a non-2xx response", async () => {
     stubFetch({ error: { message: "rate limited" } }, false, 429);
     const client = new OpenAiCompatibleClient("sk-comp-test", "https://compat.example/v1");
-    await expect(
-      client.complete([{ role: "user", content: "hi" }], abortController.signal, openAiCompatibleConfigFixture),
-    ).rejects.toThrow(/openai-compatible api error 429/);
+    const error = await client
+      .complete([{ role: "user", content: "hi" }], abortController.signal, openAiCompatibleConfigFixture)
+      .then(
+        () => null,
+        (e: unknown) => e,
+      );
+    expect(error).toBeInstanceOf(ProviderApiError);
+    expect(error).toMatchObject({
+      message: expect.stringMatching(/openai-compatible api error 429/),
+      status: 429,
+    });
     vi.unstubAllGlobals();
   });
 

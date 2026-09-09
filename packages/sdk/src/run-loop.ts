@@ -95,7 +95,10 @@ export async function runAgentLoop(
           return failure("RUN_TIMED_OUT", `run exceeded ${maxRunMs}ms wall-clock budget`);
         }
         if (error instanceof ProviderApiError) {
-          return failure("PROVIDER_API_FAILURE", error.message);
+          return failure("PROVIDER_API_FAILURE", error.message, {
+            status: error.status,
+            retryAfterSeconds: error.retryAfterSeconds,
+          });
         }
         // an unexpected non-provider exception from the adapter is still a
         // provider-side failure from the loop's perspective; fail closed and
