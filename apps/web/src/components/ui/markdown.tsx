@@ -2,8 +2,10 @@
 
 import { memo, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
+import remarkMath from "remark-math";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
+import rehypeKatex from "rehype-katex";
 import { CodeBlock } from "./code-block";
 
 // renders model output (untrusted content) as markdown. security posture:
@@ -11,23 +13,67 @@ import { CodeBlock } from "./code-block";
 // urlTransform only keeps http(s)/irc/mailto/xmpp links and blanks dangerous
 // schemes like javascript:; code blocks cannot execute anything client-side.
 // remark-breaks keeps llm-style single newlines readable like a chat app.
+// math (remark-math + rehype-katex) renders equations with katex, which is
+// run with trust disabled and throwOnError off so malformed llm math renders
+// visibly instead of crashing the message or executing anything.
+
+// llm output frequently wraps math in laTeX bracket delimiters (\(...\)
+// inline, \[...\] display) but remark-math v6 only parses dollar delimiters,
+// so bracket math is normalized to dollars before parsing. fenced and
+// inline code are left untouched: math delimiters inside code are literal.
+const CODE_SPANS = /(?:^ {0,3}`{3,}[^\n]*\n[\s\S]*?^ {0,3}`{3,})|(?:`[^`\n]*`)/gm;
+
+function convertMathDelimiters(segment: string): string {
+  return segment
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_all, body: string) => `$$\n${body}\n$$`)
+    .replace(/\\\(([^\n]*?)\\\)/g, (_all, body: string) => `$${body}$`);
+}
+
+function normalizeMathDelimiters(input: string): string {
+  const out: string[] = [];
+  let last = 0;
+  let match: RegExpExecArray | null;
+  CODE_SPANS.lastIndex = 0;
+  while ((match = CODE_SPANS.exec(input)) !== null) {
+    out.push(convertMathDelimiters(input.slice(last, match.index)));
+    out.push(match[0]);
+    last = CODE_SPANS.lastIndex;
+  }
+  out.push(convertMathDelimiters(input.slice(last)));
+  return out.join("");
+}
+
+const KATEX_OPTIONS = {
+  // llm math is frequently malformed: a broken equation must paint as an
+  // error, not throw and blank the whole transcript; strict off tolerates
+  // minor laTeX slipups; trust stays off so dangerous katex commands never
+  // execute (untrusted model output).
+  throwOnError: false,
+  strict: false,
+  trust: false,
+};
+
+const mathPlugins = [remarkMath, remarkGfm, remarkBreaks];
+const katexPlugins = [[rehypeKatex, KATEX_OPTIONS]] as [
+  [typeof rehypeKatex, typeof KATEX_OPTIONS],
+];
 
 const components: Components = {
   p: ({ children }) => (
     <p className="my-1.5 first:mt-0 last:mb-0 leading-relaxed">{children}</p>
   ),
   h1: ({ children }) => (
-    <h1 className="text-lg font-semibold tracking-tight text-neutral-900 mt-3 first:mt-0 mb-1 dark:text-neutral-50">
+    <h1 className="text-lg font-semibold tracking-tight text-neutral-900 mt-6 first:mt-0 mb-2 dark:text-neutral-50">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="text-base font-semibold tracking-tight text-neutral-900 mt-3 first:mt-0 mb-1 dark:text-neutral-50">
+    <h2 className="text-base font-semibold tracking-tight text-neutral-900 mt-6 first:mt-0 mb-2 dark:text-neutral-50">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="text-sm font-semibold tracking-tight text-neutral-900 mt-2 first:mt-0 mb-1 dark:text-neutral-50">
+    <h3 className="text-sm font-semibold tracking-tight text-neutral-900 mt-5 first:mt-0 mb-1.5 dark:text-neutral-50">
       {children}
     </h3>
   ),
@@ -56,7 +102,7 @@ const components: Components = {
     <strong className="font-semibold text-neutral-900 dark:text-neutral-50">{children}</strong>
   ),
   em: ({ children }) => <em className="italic">{children}</em>,
-  hr: () => <hr className="my-3 border-neutral-200 dark:border-neutral-800" />,
+  hr: () => <hr className="my-5 border-neutral-200 dark:border-neutral-800" />,
   blockquote: ({ children }) => (
     <blockquote className="border-l-2 border-neutral-300 pl-3 my-2 first:mt-0 last:mb-0 text-neutral-600 italic dark:border-neutral-600 dark:text-neutral-400">
       {children}
@@ -101,8 +147,12 @@ const components: Components = {
 
 export const Markdown = memo(function Markdown({ content }: { content: string }) {
   return (
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>
-      {content}
+    <ReactMarkdown
+      remarkPlugins={mathPlugins}
+      rehypePlugins={katexPlugins}
+      components={components}
+    >
+      {normalizeMathDelimiters(content)}
     </ReactMarkdown>
   );
 });
@@ -144,7 +194,11 @@ const PLAIN_COMPONENTS: Components = {
 };
 
 export const MarkdownPlain = ({ content }: { content: string }) => (
-  <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]} components={PLAIN_COMPONENTS}>
-    {content}
+  <ReactMarkdown
+    remarkPlugins={mathPlugins}
+    rehypePlugins={katexPlugins}
+    components={PLAIN_COMPONENTS}
+  >
+    {normalizeMathDelimiters(content)}
   </ReactMarkdown>
 );

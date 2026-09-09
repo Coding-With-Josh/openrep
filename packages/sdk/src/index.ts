@@ -44,3 +44,4 @@ export { ATTESTATION_LIMITS } from "./attestation.js";
 export { getScore, SCORE_MAX_ATTESTATIONS, SCORE_PAGE_LIMIT } from "./score.js";
 export type { GetScoreOptions } from "./score.js";
 export { resolve } from "./resolve.js";
+export { createStockToolset, STOCK_TOOL_NAMES, type StockToolset } from "./tools/index.js";

@@ -133,6 +133,7 @@ export default function ChatInterface() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const firstScrollRef = useRef(true);
   const prevGeneratingRef = useRef(false);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
 
   const transcriptKey =
     sessionReady && guest !== null && id !== undefined
@@ -199,6 +200,14 @@ export default function ChatInterface() {
 
   const locked = transcriptLocked;
   const loadError = transcriptError ?? scoreError;
+
+  // keep focus in the composer whenever it becomes available: on mount,
+  // after a lock clears, and after a turn finishes generating. it never
+  // focuses while disabled, so focus cannot land on an inert input.
+  const composerEnabled = !locked && !isGenerating && loadError === null;
+  useEffect(() => {
+    if (composerEnabled) composerRef.current?.focus();
+  }, [composerEnabled]);
 
   // sync name from score manifest when no query name was provided (deep link)
   useEffect(() => {
@@ -600,6 +609,7 @@ export default function ChatInterface() {
       <div className="w-full flex flex-col items-center gap-3 shrink-0 px-4 pb-4 pt-2">
         <div className="w-full max-w-4xl bg-white rounded-3xl shadow-xs border border-neutral-200 p-4 flex flex-col relative z-20 transition-all duration-200 dark:bg-neutral-900 dark:border-neutral-800">
           <textarea
+            ref={composerRef}
             disabled={locked || isGenerating || loadError !== null}
             value={message}
             onChange={(e) => {

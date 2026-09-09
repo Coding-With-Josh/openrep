@@ -11,6 +11,7 @@ import {
 } from "geist/font/pixel";
 import localFont from "next/font/local";
 import "./globals.css";
+import "katex/dist/katex.min.css";
 import Menu from "@/components/ui/menu-button";
 import { SessionProvider } from "@/components/auth/session-provider";
 import { ThemeProvider } from "next-themes";

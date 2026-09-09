@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import {
   ATTESTATION_LIMITS,
+  createStockToolset,
   decryptPrivateKey,
   getScore,
   wrapAgent,
@@ -164,12 +165,14 @@ export async function POST(
       const beforeResult = await getScore(id, context.storage);
       if (!beforeResult.ok) return errorResponse(beforeResult.error);
 
+      const toolset = createStockToolset({ storage: context.storage });
+
       const runResult = await wrapAgent({
         agentId: id,
         signingKey: decrypted.value,
         storage: context.storage,
-        config: { ...CHAT_CONFIG, system: buildSystemPrompt(agentName) },
-        tools: {},
+        config: { ...CHAT_CONFIG, tools: toolset.definitions, system: buildSystemPrompt(agentName) },
+        tools: toolset.implementations,
         apiKey: config.groqApiKey,
         task: message,
       });
