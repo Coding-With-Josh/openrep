@@ -16,6 +16,7 @@ import Menu from "@/components/ui/menu-button";
 import { SessionProvider } from "@/components/auth/session-provider";
 import { ThemeProvider } from "next-themes";
 import { metadataBase } from "@/lib/site";
+import { Analytics } from "@vercel/analytics/next"
 
 export const metadata: Metadata = {
   metadataBase,
