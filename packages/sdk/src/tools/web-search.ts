@@ -12,6 +12,18 @@ const FREESERP_ORIGIN = "https://freeserp.ai";
 const WEB_SEARCH_MAX_SIZE = 10;
 const WEB_SEARCH_MAX_QUERY = 300;
 const WEB_SEARCH_RETRY_DELAY_MS = 350;
+// hard self-bounds so a result set can never blow the attestation per-entry
+// limit (4000 canonical chars; rejected, never truncated) or the
+// conversation echo budget. individual long fields are clipped, and the
+// result list is then cut so the whole serialized output stays under the
+// bound with headroom; count always reflects what is really returned.
+const WEB_SEARCH_MAX_TITLE_LENGTH = 200;
+const WEB_SEARCH_MAX_SUMMARY_LENGTH = 400;
+const WEB_SEARCH_MAX_SERIALIZED_RESULTS = 3600;
+
+function clip(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max)}...` : value;
+}
 
 const WEB_SEARCH_SORT_FIELDS = new Set([
   "relevance",
@@ -52,8 +64,8 @@ function pickResult(result: FreeSerpResult) {
   return {
     domain: typeof result.domain === "string" ? result.domain : null,
     url: typeof result.url === "string" ? result.url : null,
-    title: typeof result.title === "string" ? result.title : null,
-    summary: typeof result.ai_summary === "string" ? result.ai_summary : null,
+    title: typeof result.title === "string" ? clip(result.title, WEB_SEARCH_MAX_TITLE_LENGTH) : null,
+    summary: typeof result.ai_summary === "string" ? clip(result.ai_summary, WEB_SEARCH_MAX_SUMMARY_LENGTH) : null,
     category: typeof result.category === "string" ? result.category : null,
     aiCategories: Array.isArray(result.ai_categories)
       ? result.ai_categories.filter((value): value is string => typeof value === "string")
@@ -178,13 +190,26 @@ export async function runWebSearch(
   }
 
   const results = Array.isArray(body.results) ? body.results : [];
+  const shaped = results
+    .slice(0, cleanSize)
+    .map((entry) => pickResult(entry as FreeSerpResult));
+  // cut the list to the serialized bound; the first entry always fits because
+  // its fields are clipped above. dropping tail entries keeps the attestation
+  // entry canonicalizable and the model-facing echo small, which is why count
+  // is derived from what was kept, never from the remote array.
+  const kept: unknown[] = [];
+  let totalChars = 0;
+  for (const entry of shaped) {
+    const serialized = JSON.stringify(entry) ?? "";
+    if (kept.length > 0 && totalChars + serialized.length > WEB_SEARCH_MAX_SERIALIZED_RESULTS) break;
+    kept.push(entry);
+    totalChars += serialized.length;
+  }
   return {
     query: cleanQuery,
     total: typeof body.total === "number" ? body.total : null,
-    count: Math.min(results.length, cleanSize),
-    results: results
-      .slice(0, cleanSize)
-      .map((entry) => pickResult(entry as FreeSerpResult)),
+    count: kept.length,
+    results: kept,
   };
 };
 

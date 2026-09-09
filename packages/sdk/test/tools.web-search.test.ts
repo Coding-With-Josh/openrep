@@ -119,4 +119,32 @@ describe("web_search", () => {
       runWebSearch({ query: "x" }, { fetchImpl, lookupImpl: LOOKUP }),
     ).rejects.toThrow("search api failed: upstream (search_phase_execution_exception)");
   });
+
+  it("self-bounds output: clips long fields and cuts the list to the serialized bound", async () => {
+    const longSummary = "s".repeat(2000);
+    const longTitle = "t".repeat(500);
+    const rows = Array.from({ length: 10 }, (_, index) => ({
+      ...RESULT_ROW,
+      domain: `example${index}.ai`,
+      url: `https://example${index}.ai`,
+      title: longTitle,
+      ai_summary: longSummary,
+    }));
+    const fetchImpl = stubFetch(() =>
+      new Response(JSON.stringify({ ok: true, total: 10, count: 10, results: rows }), { status: 200 }),
+    );
+    const output = await runWebSearch({ query: "x", size: 10 }, { fetchImpl, lookupImpl: LOOKUP });
+
+    // every returned entry is clipped at the field caps
+    for (const entry of output.results as { title: string; summary: string }[]) {
+      expect(entry.title.length).toBeLessThanOrEqual(203);
+      expect(entry.summary.length).toBeLessThanOrEqual(403);
+    }
+    // count is honest about what was kept, and the kept set fits the bound
+    expect(output.count).toBe(output.results.length);
+    expect(JSON.stringify(output.results).length).toBeLessThanOrEqual(3700);
+    // the tail of the ten-result set was dropped, so the attestation per-entry
+    // limit (4000 canonical chars) can never be exceeded by this tool's output
+    expect(output.results.length).toBeLessThan(10);
+  });
 });
