@@ -19,10 +19,18 @@
     "build": "tsc",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "test": "tsc && vitest run"
+    "test": "tsc && vitest run",
+    "prepack": "tsc"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Coding-With-Josh/openrep.git"
   },
   "dependencies": {
-    "@openrep/sdk": "workspace:*",
+    "@openrep/sdk": "workspace:^",
     "@noble/ed25519": "^3.2.0",
     "commander": "^13.1.0"
   },

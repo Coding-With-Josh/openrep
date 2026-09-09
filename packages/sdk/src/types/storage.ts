@@ -150,6 +150,17 @@ export interface StorageAdapter {
   // list agents it actually holds a session key row for, never a global
   // agent listing (adversarial review: idor / tenant scoping).
   listOwnedAgents(ownerUserId: string): Promise<AgentRecord[]>;
+  // the leaderboard's public read: every non-revoked agent, oldest first.
+  // this is the ONLY global listing in the adapter and it is a deliberate
+  // public-read exception to the owner-scoping rule. the returned rows are
+  // agent manifest records only, exactly the getAgent read; session keys,
+  // chat sessions, and chat messages live in separate tables and are never
+  // joined, so a public caller cannot reach another owner's sessions or
+  // chats through it. callers that need owner-relative reads must keep
+  // using listOwnedAgents; there is still no owner parameter anywhere that
+  // could be substituted for another user's (adversarial review: idor /
+  // tenant scoping).
+  listAllAgents(): Promise<AgentRecord[]>;
   // web account layer: users and their oauth/credentials account links.
   // these tables are web-owned (the sdk exposes the storage primitives, the
   // web auth layer owns the policy). not-found reads return null, never

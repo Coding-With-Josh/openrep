@@ -1016,9 +1016,10 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
   async listOwnedAgents(ownerUserId: string): Promise<AgentRecord[]> {
     // ownership is resolved from the session key ledger at query level:
     // listing an owner's agents is exactly "agents that owner holds a
-    // session key row for". there is no global list call and no owner
-    // parameter that could be substituted for another user's (adversarial
-    // review: idor / tenant scoping).
+    // session key row for". there is no owner-parameterized global list
+    // call; the one global listing, listAllAgents, is the leaderboard's
+    // deliberate public read and needs no owner (adversarial review: idor /
+    // tenant scoping).
     const rows = this.db
       .prepare(
         `SELECT ${OWNED_AGENT_COLUMNS}
@@ -1028,6 +1029,25 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
          ORDER BY sk.row_id ASC`,
       )
       .all(ownerUserId);
+    return rows.map(recordFromRow);
+  }
+
+  async listAllAgents(): Promise<AgentRecord[]> {
+    // the leaderboard's public read: every non-revoked agent row, oldest
+    // first. deliberately the only global listing in the adapter, and it
+    // never joins session_keys or chat tables, so a public caller cannot
+    // reach another owner's sessions or chats through it (adversarial
+    // review: idor / tenant scoping). the revoked_at filter keeps revoked
+    // identities off the public board; the columns are the portable
+    // manifest fields only, exactly the getAgent read.
+    const rows = this.db
+      .prepare(
+        `SELECT ${AGENT_COLUMNS}
+         FROM agents
+         WHERE revoked_at IS NULL
+         ORDER BY row_id ASC`,
+      )
+      .all();
     return rows.map(recordFromRow);
   }
 

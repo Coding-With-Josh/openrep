@@ -45,6 +45,7 @@ type ScoreBody = {
   manifest: AgentManifest;
   manifestVerdict: { valid: boolean; reason: string };
   score: AgentScore;
+  isOwner: boolean;
   attestations: { attestation: Attestation; verdict: { valid: boolean; reason: string } }[];
   verifiedCount: number;
   totalCount: number;
@@ -60,6 +61,7 @@ const Page = () => {
   // fallback and still drives the ledger and verification state.
   const searchParams = useSearchParams();
   const queryName = searchParams.get("name");
+  const fromLeaderboard = searchParams.get("from") === "leaderboard";
   const { ready: sessionReady, session: guest } = useGuestSession();
 
   // the score card is keyed by the server-confirmed session userId so a
@@ -82,11 +84,20 @@ const Page = () => {
   const attestations = body?.attestations ?? null;
   const verifiedCount = body?.verifiedCount ?? 0;
   const totalCount = body?.totalCount ?? 0;
+  const isOwner = body?.isOwner ?? null;
 
   const name =
     queryName ??
     manifest?.name.replace(/\.agent$/, "") ??
     (id !== undefined ? shortId(id) : "agent");
+
+  // visitors who came from the leaderboard go back there, owners of the
+  // agent keep the chat-page back link, and everyone else gets the public
+  // leaderboard instead of a chat page they cannot open.
+  const backHref =
+    fromLeaderboard || isOwner === false
+      ? "/leaderboard"
+      : `/agents/${encodeURIComponent(id ?? "")}?name=${encodeURIComponent(name)}`;
   const composite = score?.composite ?? 0;
   const maxBreakdown = Math.max(
     1,
@@ -98,7 +109,7 @@ const Page = () => {
       <div className="relative w-full max-w-2xl flex flex-col gap-4 z-10">
         <header className="flex items-center gap-4 w-full py-3">
           <Link
-            href={`/agents/${encodeURIComponent(id ?? "")}?name=${encodeURIComponent(name)}`}
+            href={backHref}
             className="p-2 rounded-full text-neutral-600 hover:text-neutral-800 transition-all duration-200 hover:scale-102 active:scale-98 dark:text-neutral-400 dark:hover:text-neutral-50"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -238,9 +249,16 @@ const Page = () => {
                 <h2 className="text-md font-medium tracking-tight text-neutral-900 dark:text-neutral-50">
                   attestation ledger
                 </h2>
-                <p className="text-xs text-neutral-400 dark:text-neutral-500">newest first</p>
+                <p className="text-xs text-neutral-400 dark:text-neutral-500">
+                  {isOwner ? "newest first" : "owner only"}
+                </p>
               </div>
-              {attestations === null || attestations.length === 0 ? (
+              {!isOwner ? (
+                <p className="text-sm text-neutral-500 py-3 text-center dark:text-neutral-400">
+                  {totalCount} attestation{totalCount === 1 ? "" : "s"} · {verifiedCount}{" "}
+                  verified · contents are private to the owner
+                </p>
+              ) : attestations === null || attestations.length === 0 ? (
                 <p className="text-sm text-neutral-400 py-3 text-center dark:text-neutral-500">
                   no attestations on this ledger yet
                 </p>

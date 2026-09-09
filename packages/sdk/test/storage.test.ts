@@ -629,6 +629,53 @@ describe("sqlite storage adapter: owned agent listing", () => {
   });
 });
 
+describe("sqlite storage adapter: public agent listing", () => {
+  it("lists every non-revoked agent oldest first, regardless of ownership", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agentA = makeAgent({ name: "public-a.agent", createdAt: "2026-01-01T00:00:00.000Z" });
+    const agentB = makeAgent({ name: "public-b.agent", createdAt: "2026-01-02T00:00:00.000Z" });
+    const agentC = makeAgent({ name: "public-c.agent", createdAt: "2026-01-03T00:00:00.000Z" });
+    await storage.saveAgent(agentA);
+    await storage.saveAgent(agentB);
+    await storage.saveAgent(agentC);
+    // ownership must not matter to the public read: an agent with no
+    // session key row anywhere is still listed, and the list is global.
+    await storage.setSessionKey(makeSessionKey(agentC.publicKey, "owner-c"));
+    // insertion order is oldest first, and the read is global: agents
+    // without any session key row are listed just the same (rowId is the
+    // storage-assigned index, compared by key list like every other list
+    // test here).
+    expect((await storage.listAllAgents()).map((a) => a.publicKey)).toEqual([
+      agentA.publicKey,
+      agentB.publicKey,
+      agentC.publicKey,
+    ]);
+    // empty ledger reads as an empty list, never an error
+    expect(await createSqliteStorage(":memory:").listAllAgents()).toEqual([]);
+  });
+
+  it("never returns revoked agents", async () => {
+    const storage = createSqliteStorage(":memory:");
+    await storage.saveAgent(makeAgent({ name: "live.agent", publicKey: "pk-live" }));
+    const revoked = makeAgent({ name: "revoked.agent", publicKey: "pk-revoked" });
+    await storage.saveAgent(revoked);
+    await storage.revokeAgent(revoked.publicKey, "2026-01-05T00:00:00.000Z");
+    const list = await storage.listAllAgents();
+    expect(list.map((a) => a.publicKey)).toEqual(["pk-live"]);
+  });
+
+  it("returns the same portable manifest columns as getAgent, never session rows", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "columns.agent" });
+    await storage.saveAgent(agent);
+    await storage.setSessionKey(makeSessionKey(agent.publicKey, "owner-x"));
+    const [listed] = await storage.listAllAgents();
+    expect(listed).toEqual(await storage.getAgent(agent.publicKey));
+    expect(listed).not.toHaveProperty("sessionKey");
+    expect(listed).not.toHaveProperty("chatMessages");
+  });
+});
+
 describe("sqlite storage adapter: users and account links", () => {
   it("persists a user with a scrypt hash and reads it back by email and id", async () => {
     const storage = createSqliteStorage(":memory:");

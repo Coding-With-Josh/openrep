@@ -3,7 +3,7 @@ import { siteUrl } from "@/lib/site";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const origin = siteUrl();
-  const pages = ["/", "/agents", "/agents/new", "/privacy-policy", "/terms-and-conditions"];
+  const pages = ["/", "/agents", "/agents/new", "/leaderboard", "/privacy-policy", "/terms-and-conditions"];
   return pages.map((path) => ({
     url: `${origin}${path}`,
     changeFrequency: "monthly",

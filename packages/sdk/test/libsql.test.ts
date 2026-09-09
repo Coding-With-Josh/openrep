@@ -731,6 +731,45 @@ describe("libsql storage adapter: owned agent listing", () => {
   });
 });
 
+describe("libsql storage adapter: public agent listing", () => {
+  it("lists every non-revoked agent oldest first, regardless of ownership", async () => {
+    const storage = await makeStorage();
+    const agentA = makeAgent({ name: "libsql-public-a.agent" });
+    const agentB = makeAgent({ name: "libsql-public-b.agent" });
+    const agentC = makeAgent({ name: "libsql-public-c.agent" });
+    await storage.saveAgent(agentA);
+    await storage.saveAgent(agentB);
+    await storage.saveAgent(agentC);
+    // ownership must not matter to the public read: an agent with no
+    // session key row anywhere is still listed, and the list is global.
+    await storage.setSessionKey(makeSessionKey(agentC.publicKey, "owner-c"));
+    // insertion order is oldest first, and the read is global: agents
+    // without any session key row are listed just the same (rowId is the
+    // storage-assigned index, compared by key list like every other list
+    // test here).
+    expect((await storage.listAllAgents()).map((a) => a.publicKey)).toEqual([
+      agentA.publicKey,
+      agentB.publicKey,
+      agentC.publicKey,
+    ]);
+    expect(await (await makeStorage()).listAllAgents()).toEqual([]);
+    await storage.close();
+  });
+
+  it("never returns revoked agents and stays free of session rows", async () => {
+    const storage = await makeStorage();
+    await storage.saveAgent(makeAgent({ name: "libsql-live.agent", publicKey: "pk-libsql-live" }));
+    const revoked = makeAgent({ name: "libsql-revoked.agent", publicKey: "pk-libsql-revoked" });
+    await storage.saveAgent(revoked);
+    await storage.revokeAgent(revoked.publicKey, "2026-01-05T00:00:00.000Z");
+    await storage.setSessionKey(makeSessionKey("pk-libsql-live", "owner-x"));
+    const list = await storage.listAllAgents();
+    expect(list.map((a) => a.publicKey)).toEqual(["pk-libsql-live"]);
+    expect(list[0]).toEqual(await storage.getAgent("pk-libsql-live"));
+    await storage.close();
+  });
+});
+
 describe("libsql storage adapter: users and account links", () => {
   it("persists a user with a scrypt hash and reads it back by email and id", async () => {
     const storage = await makeStorage();

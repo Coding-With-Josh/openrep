@@ -10,6 +10,7 @@ export async function GET(
 ): Promise<Response> {
   const sessionGate = await requireSession(request);
   if ("response" in sessionGate) return sessionGate.response;
+  const { session } = sessionGate;
   try {
     const { id } = await params;
     const context = await createRequestContext();
@@ -18,6 +19,8 @@ export async function GET(
       if (record === null) {
         return errorResponse(codedError("AGENT_NOT_FOUND", `no agent with id ${id}`));
       }
+      const isOwner = (await context.storage.getSessionKey(id, session.userId)) !== null;
+
       const manifest: AgentManifest = {
         name: record.name,
         publicKey: record.publicKey,
@@ -36,12 +39,14 @@ export async function GET(
       const attestations = [];
       let cursor: string | undefined;
       let verifiedCount = 0;
+      let totalCount = 0;
       for (;;) {
         const page = await context.storage.getAttestations(id, { cursor, limit: 1000 });
-        for (const record of page.items) {
-          const verdict = await verifyAttestation(record, context.storage);
+        for (const row of page.items) {
+          totalCount += 1;
+          const verdict = await verifyAttestation(row, context.storage);
           if (verdict.valid) verifiedCount += 1;
-          attestations.push({ attestation: record, verdict });
+          if (isOwner) attestations.push({ attestation: row, verdict });
         }
         if (page.nextCursor === null) break;
         cursor = page.nextCursor;
@@ -54,9 +59,10 @@ export async function GET(
             ? manifestVerdict.value
             : { valid: false, reason: manifestVerdict.error.message },
           score: scoreResult.value,
+          isOwner,
           attestations,
           verifiedCount,
-          totalCount: attestations.length,
+          totalCount,
         },
         200,
       );

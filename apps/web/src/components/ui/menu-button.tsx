@@ -3,7 +3,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Bot, Moon, Shield, FileText, Sun } from "lucide-react";
+import { Home, Bot, Trophy, Moon, Shield, FileText, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import { MenuToggle } from "@/components/effects/menu-toggle";
 
@@ -23,6 +23,7 @@ type MenuItem = {
 const ITEMS: MenuItem[] = [
   { label: "home", href: "/", Icon: Home },
   { label: "your agents", href: "/agents", Icon: Bot },
+  { label: "leaderboard", href: "/leaderboard", Icon: Trophy },
   { label: "privacy policy", href: "/privacy-policy", Icon: Shield },
   { label: "terms and conditions", href: "/terms-and-conditions", Icon: FileText },
   { label: "check me out", href: "https://x.com/josh_scriptz", Icon: XLogo, external: true },
