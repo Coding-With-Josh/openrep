@@ -88,6 +88,7 @@ export default function RootLayout({
     ${GeistPixelLine.variable} ${sans.variable} ${mono.variable}
     `}
     >
+      <Analytics/>
       <body className="font-sans bg-white text-black dark:bg-neutral-950 dark:text-neutral-100">
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
         <SessionProvider>{children} <Menu /></SessionProvider>
