@@ -28,5 +28,9 @@ pnpm-debug.log*
 coverage/
 apps/web/design.md
 
+#opencode
 .opencode*
 .opencode/summary.md
+
+#development
+check.md
