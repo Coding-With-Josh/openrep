@@ -56,11 +56,39 @@ class OpenAiChatCore implements ProviderClient {
           : []),
         ...messages.map((message) => {
           if ("name" in message) {
-            // a tool result: deliver as a user turn labeled with the tool
-            // name, matching the historical openai wire format even though
-            // the message model may carry extra structured fields that this
-            // provider does not model.
-            return { role: "user" as const, content: message.content, name: message.name };
+            // a fed-back tool result. the openai-compatible wire format
+            // requires role:"tool" plus the id of the assistant tool call it
+            // answers; the previous role:"user" + name shape is a provider
+            // 400. fail closed when the pairing id is missing rather than
+            // sending a request the provider will reject.
+            if (message.toolCallId === undefined) {
+              throw new ProviderApiError(`${this.label} tool result message missing tool_call_id`);
+            }
+            return { role: "tool", tool_call_id: message.toolCallId, content: message.content };
+          }
+          if (message.role === "assistant" && message.toolCall !== undefined) {
+            // echo the accepted tool call back with its id and the arguments
+            // the model produced, stringified as the provider expects. an
+            // id-less call cannot be paired with its result, so it is a typed
+            // error, never a malformed request.
+            const call = message.toolCall;
+            if (call.id === undefined) {
+              throw new ProviderApiError(`${this.label} assistant tool call history missing id`);
+            }
+            return {
+              role: "assistant",
+              content: message.content,
+              tool_calls: [
+                {
+                  id: call.id,
+                  type: "function",
+                  function: {
+                    name: call.name,
+                    arguments: JSON.stringify(call.arguments),
+                  },
+                },
+              ],
+            };
           }
           return { role: message.role, content: message.content };
         }),
@@ -170,27 +198,36 @@ function parseOpenAiResponse(json: unknown, label: string): ProviderResponse {
     return { kind: "text", text: item.content };
   }
 
+  // the tool call id must survive parsing: the run loop echoes it into the
+  // assistant history and the paired tool-result message references it.
+  // losing it makes the second provider call unanswerable.
   if (Array.isArray(item.tool_calls) && item.tool_calls.length > 0) {
-    const call = item.tool_calls[0];
-    if (call === null || typeof call !== "object" || Array.isArray(call)) {
-      throw new ProviderApiError(`${label} tool call shape was invalid`);
+      const call = item.tool_calls[0];
+      if (call === null || typeof call !== "object" || Array.isArray(call)) {
+        throw new ProviderApiError(`${label} tool call shape was invalid`);
+      }
+      const fn = (call as { function?: unknown }).function;
+      if (fn === null || typeof fn !== "object" || Array.isArray(fn)) {
+        throw new ProviderApiError(`${label} tool call had no function`);
+      }
+      const fnItem = fn as { name?: unknown; arguments?: unknown };
+      if (typeof fnItem.name !== "string") {
+        throw new ProviderApiError(`${label} tool call had no name`);
+      }
+      let parsed: unknown;
+      try {
+        parsed = typeof fnItem.arguments === "string" ? JSON.parse(fnItem.arguments) : fnItem.arguments;
+      } catch {
+        throw new ProviderApiError(`${label} tool arguments were not json`);
+      }
+      const id = typeof (call as { id?: unknown }).id === "string" ? (call as { id: string }).id : undefined;
+      return {
+        kind: "tool_call",
+        name: fnItem.name,
+        arguments: parsed,
+        ...(id !== undefined && { id }),
+      };
     }
-    const fn = (call as { function?: unknown }).function;
-    if (fn === null || typeof fn !== "object" || Array.isArray(fn)) {
-      throw new ProviderApiError(`${label} tool call had no function`);
-    }
-    const fnItem = fn as { name?: unknown; arguments?: unknown };
-    if (typeof fnItem.name !== "string") {
-      throw new ProviderApiError(`${label} tool call had no name`);
-    }
-    let parsed: unknown;
-    try {
-      parsed = typeof fnItem.arguments === "string" ? JSON.parse(fnItem.arguments) : fnItem.arguments;
-    } catch {
-      throw new ProviderApiError(`${label} tool arguments were not json`);
-    }
-    return { kind: "tool_call", name: fnItem.name, arguments: parsed };
-  }
 
   throw new ProviderApiError(`${label} response contained no usable message`);
 }

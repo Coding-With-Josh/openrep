@@ -121,7 +121,10 @@ describe("openai adapter", () => {
       abortController.signal,
       sampleConfigFixture,
     );
-    expect(result).toEqual({ kind: "tool_call", name: "add", arguments: { a: 1, b: 2 } });
+    // the tool call id survives parsing: the loop echoes it into history and
+    // the paired tool-result message references it; losing it makes the
+    // second provider request unanswerable.
+    expect(result).toEqual({ kind: "tool_call", name: "add", arguments: { a: 1, b: 2 }, id: "call_1" });
     vi.unstubAllGlobals();
   });
 
@@ -357,6 +360,71 @@ describe("openai-compatible adapter", () => {
     vi.unstubAllGlobals();
   });
 
+  it("serializes multi-turn tool history as tool_calls plus role:tool results", async () => {
+    // the exact normalized history the run loop feeds after one web_search
+    // turn. groq rejects the historical role:"user"+name shape with a 400,
+    // so the wire body is pinned here as a regression guard.
+    const history: ProviderMessage[] = [
+      { role: "user", content: "find new ai agent startups" },
+      {
+        role: "assistant",
+        content: "call web_search",
+        toolCall: { name: "web_search", arguments: { query: "ai agent startup" }, id: "call_1" },
+      },
+      { role: "user", content: '{"count":3}', name: "web_search", toolCallId: "call_1" },
+    ];
+    const fetchMock = stubCapturingFetch({
+      choices: [{ message: { role: "assistant", content: "here are three" } }],
+    });
+    const client = new OpenAiCompatibleClient("sk-comp-test", "https://compat.example/v1");
+    await client.complete(history, abortController.signal, openAiCompatibleConfigFixture);
+
+    const [, init] = fetchMock.mock.calls[0];
+    const sent = JSON.parse((init as { body: string }).body);
+    expect(sent.messages).toEqual([
+      { role: "user", content: "find new ai agent startups" },
+      {
+        role: "assistant",
+        content: "call web_search",
+        tool_calls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "web_search", arguments: '{"query":"ai agent startup"}' },
+          },
+        ],
+      },
+      { role: "tool", tool_call_id: "call_1", content: '{"count":3}' },
+    ]);
+    vi.unstubAllGlobals();
+  });
+
+  it("fails closed on tool history that cannot be paired", async () => {
+    const client = new OpenAiCompatibleClient("sk-comp-test", "https://compat.example/v1");
+    stubFetch({ choices: [{ message: { role: "assistant", content: "ok" } }] });
+    await expect(
+      client.complete(
+        [{ role: "user", content: "x", name: "web_search" }],
+        abortController.signal,
+        openAiCompatibleConfigFixture,
+      ),
+    ).rejects.toThrow(/missing tool_call_id/);
+    vi.unstubAllGlobals();
+
+    stubFetch({ choices: [{ message: { role: "assistant", content: "ok" } }] });
+    await expect(
+      client.complete(
+        [
+          { role: "user", content: "x" },
+          { role: "assistant", content: "call x", toolCall: { name: "x", arguments: {} } },
+        ],
+        abortController.signal,
+        openAiCompatibleConfigFixture,
+      ),
+    ).rejects.toThrow(/missing id/);
+    vi.unstubAllGlobals();
+  });
+
   it("parses a tool_call response", async () => {
     stubFetch({
       choices: [
@@ -375,7 +443,7 @@ describe("openai-compatible adapter", () => {
       abortController.signal,
       openAiCompatibleConfigFixture,
     );
-    expect(result).toEqual({ kind: "tool_call", name: "add", arguments: { a: 1, b: 2 } });
+    expect(result).toEqual({ kind: "tool_call", name: "add", arguments: { a: 1, b: 2 }, id: "call_1" });
     vi.unstubAllGlobals();
   });
 
