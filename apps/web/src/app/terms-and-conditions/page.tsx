@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import { LegalPage } from "@/components/legal/legal-page";
 
 export const metadata: Metadata = {
-  title: "terms and conditions - openrep",
+  title: "Terms and Conditions",
   description: "The terms that govern use of the openrep service",
+  alternates: {
+    canonical: "/terms-and-conditions",
+  },
 };
 
 function Section({

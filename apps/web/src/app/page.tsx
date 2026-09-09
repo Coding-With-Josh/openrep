@@ -1,4 +1,14 @@
+import type { Metadata } from "next";
 import { Intro } from "@/components/sections/intro";
+
+export const metadata: Metadata = {
+  title: {
+    absolute: "openrep - represent and repute",
+  },
+  alternates: {
+    canonical: "/",
+  },
+};
 
 export default function Home() {
   return (

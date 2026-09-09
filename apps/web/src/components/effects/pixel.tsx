@@ -76,12 +76,12 @@ const PIXEL_FONT_KEYS = Object.keys(PIXEL_FONT_MAP) as PixelFont[]
  * Extends native heading element attributes so all standard HTML
  * props (id, aria-*, data-*, event handlers) are forwarded.
  */
-export interface PixelHeadingProps extends React.ComponentProps<"h1"> {
+export interface PixelHeadingProps extends React.HTMLAttributes<HTMLElement> {
   /**
-   * The heading level to render.
+   * The element tag to render.
    * @default "h1"
    */
-  as?: "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+  as?: "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "p" | "span"
   /**
    * The resting pixel font displayed by default.
    * @default "square"
@@ -230,7 +230,7 @@ export function PixelHeading({
 
   /* ---- Event handlers ---- */
   const handleMouseEnter = useCallback(
-    (e: React.MouseEvent<HTMLHeadingElement>) => {
+    (e: React.MouseEvent<HTMLElement>) => {
       if (!disableHover) {
         if (isSwapMode) {
           swapToHover()
@@ -251,7 +251,7 @@ export function PixelHeading({
   )
 
   const handleMouseLeave = useCallback(
-    (e: React.MouseEvent<HTMLHeadingElement>) => {
+    (e: React.MouseEvent<HTMLElement>) => {
       if (!disableHover) {
         isSwapMode ? swapToInitial() : stopCycling()
       }
@@ -281,7 +281,7 @@ export function PixelHeading({
   )
 
   const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLHeadingElement>) => {
+    (e: React.KeyboardEvent<HTMLElement>) => {
       if (!disableHover && !disableCycling) {
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault()

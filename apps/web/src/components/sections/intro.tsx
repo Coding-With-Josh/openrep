@@ -21,20 +21,20 @@ export const Intro = () => {
       >
         openrep
       </PixelHeading>
-      <h1 className="text-md lg:text-xl tracking-[-0.02em] font-sans">
+      <p className="text-md lg:text-xl tracking-[-0.02em] font-sans">
         Platform-agnostic Reputation Layer for AI Agents.
-      </h1>
+      </p>
       <div className="flex items-center justify-center gap-4 mt-6">
         <Link href="/agents">
           <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-white bg-black rounded-full hover:scale-102 active:scale-98 transition-all dark:bg-white dark:text-black">
             <ArrowUpRightIcon className="w-4 h-4" />
-            <h1>launch an agent</h1>
+            <span>launch an agent</span>
           </button>
         </Link>
         <Link href="/">
           <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-black bg-black/10 rounded-full hover:scale-102 active:scale-98 transition-all dark:text-white dark:bg-white/10">
             <Play className="w-4 h-4" />
-            <h1>watch demo</h1>
+            <span>watch demo</span>
           </button>
         </Link>
       </div>

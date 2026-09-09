@@ -2,8 +2,11 @@ import type { Metadata } from "next";
 import { LegalPage } from "@/components/legal/legal-page";
 
 export const metadata: Metadata = {
-  title: "privacy policy - openrep",
+  title: "Privacy Policy",
   description: "How the openrep service collects, uses, and protects information",
+  alternates: {
+    canonical: "/privacy-policy",
+  },
 };
 
 function Section({

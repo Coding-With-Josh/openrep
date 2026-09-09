@@ -15,11 +15,44 @@ import "katex/dist/katex.min.css";
 import Menu from "@/components/ui/menu-button";
 import { SessionProvider } from "@/components/auth/session-provider";
 import { ThemeProvider } from "next-themes";
+import { metadataBase } from "@/lib/site";
 
 export const metadata: Metadata = {
-  title: "openrep - represent and repute",
+  metadataBase,
+  title: {
+    default: "openrep - represent and repute",
+    template: "%s | openrep",
+  },
   description: "Platform-agnostic reputation layer for AI agents",
+  openGraph: {
+    type: "website",
+    siteName: "openrep",
+    locale: "en_US",
+    url: "/",
+  },
+  twitter: {
+    card: "summary",
+  },
+  robots: {
+    index: true,
+    follow: true,
+  },
 };
+
+const STRUCTURED_DATA = JSON.stringify([
+  {
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "openrep",
+    url: metadataBase.toString(),
+  },
+  {
+    "@context": "https://schema.org",
+    "@type": "Organization",
+    name: "openrep",
+    url: metadataBase.toString(),
+  },
+]);
 
 // const sans = localFont({
 //   src: "../../assets/font/Founders Grotesk Text/Founders Grotesk Text.ttf",
@@ -58,6 +91,7 @@ export default function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="light" enableSystem>
         <SessionProvider>{children} <Menu /></SessionProvider>
         </ThemeProvider>
+        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: STRUCTURED_DATA }} />
        
       </body>
     </html>
