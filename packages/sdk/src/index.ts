@@ -28,6 +28,7 @@ export { ADJECTIVES, NOUNS, COLORS, generateName, generateNameBatch } from "./na
 export { attest, verifyAttestation, ATTESTATION_SCHEMA_VERSION, ingest } from "./attestation.js";
 export { revokeAgent, REVOCATION_REQUEST_MAX_AGE_MS } from "./revocation.js";
 export { rotateAgent, ROTATION_REQUEST_MAX_AGE_MS } from "./rotation.js";
+export { setVisibility } from "./agent.js";
 export { createSqliteStorage, getSqliteStorage } from "./storage/sqlite.js";
 export { createLibsqlStorage, LibsqlStorageAdapter, type LibsqlStorageConfig } from "./storage/libsql.js";
 export { createProviderClient } from "./providers/index.js";

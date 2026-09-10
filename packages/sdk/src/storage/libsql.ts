@@ -68,6 +68,7 @@ import type { SessionKeyBackend, SessionKeyRow } from "../types/security.js";
 import type {
   AccountLink,
   AgentRecord,
+  AgentVisibility,
   AttestationRecord,
   ChatMessage,
   ChatMessageRecord,
@@ -107,7 +108,8 @@ const SCHEMA_STATEMENTS: readonly string[] = [
   created_at TEXT NOT NULL,
   manifest_version INTEGER NOT NULL,
   signature TEXT NOT NULL,
-  revoked_at TEXT
+  revoked_at TEXT,
+  visibility TEXT NOT NULL DEFAULT 'public'
 );`,
   `CREATE TABLE IF NOT EXISTS attestations (
   row_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -259,6 +261,17 @@ async function ensureRevocationSchema(client: Client): Promise<void> {
   }
 }
 
+// agent visibility, identical to sqlite.ts: the guarded ALTER promotes
+// legacy rows to public via the column default, exactly the required
+// behavior for pre-created agents, and NOT NULL means a row can never hold
+// NULL, so recordFromRow never has to guess a default.
+async function ensureVisibilitySchema(client: Client): Promise<void> {
+  const columns = await tableColumns(client, "agents");
+  if (!columns.includes("visibility")) {
+    await client.execute("ALTER TABLE agents ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'");
+  }
+}
+
 async function ensureExternalVerificationSchema(client: Client): Promise<void> {
   const columns = await tableColumns(client, "attestations");
   if (!columns.includes("external_verification")) {
@@ -343,6 +356,7 @@ async function bootstrap(client: Client, url: string): Promise<void> {
     await client.batch([...SCHEMA_STATEMENTS], "deferred");
     await ensureIdempotencySchema(client);
     await ensureRevocationSchema(client);
+    await ensureVisibilitySchema(client);
     await ensureExternalVerificationSchema(client);
     await ensureChatAttestationSchema(client);
     await backfillChatAttestationLinks(client);
@@ -367,8 +381,8 @@ const FK_VIOLATION_MESSAGE = "FOREIGN KEY constraint failed";
 // the agent insert shared by saveAgent and rotateAgent, so the two write
 // paths cannot drift about the column set or the parameter order. positional
 // parameters only, precisely like every other statement in this adapter.
-const INSERT_AGENT_SQL = `INSERT INTO agents (name, public_key, owner_public_key, memory_pointer, permissions, created_at, manifest_version, signature, revoked_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+const INSERT_AGENT_SQL = `INSERT INTO agents (name, public_key, owner_public_key, memory_pointer, permissions, created_at, manifest_version, signature, revoked_at, visibility)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 function agentRecordArgs(record: AgentRecord): Array<string | number | null> {
   return [
@@ -381,6 +395,7 @@ function agentRecordArgs(record: AgentRecord): Array<string | number | null> {
     record.manifestVersion,
     record.signature,
     record.revokedAt,
+    record.visibility,
   ];
 }
 
@@ -588,7 +603,8 @@ const AGENT_COLUMNS = `
   created_at AS createdAt,
   manifest_version AS manifestVersion,
   signature,
-  revoked_at AS revokedAt
+  revoked_at AS revokedAt,
+  visibility
 `;
 
 const ATTESTATION_COLUMNS = `
@@ -638,7 +654,8 @@ const OWNED_AGENT_COLUMNS = `
   a.created_at AS createdAt,
   a.manifest_version AS manifestVersion,
   a.signature,
-  a.revoked_at AS revokedAt
+  a.revoked_at AS revokedAt,
+  a.visibility
 `;
 
 // the users select list, shared so read aliasing cannot drift between the
@@ -704,6 +721,19 @@ export class LibsqlStorageAdapter implements StorageAdapter, SessionKeyBackend {
     // flight; never a silent success. rowsAffected is a number in libsql.
     if (result.rowsAffected === 0) {
       throw codedError("AGENT_NOT_FOUND", `cannot revoke unknown agent: ${agentId}`, new Error("no matching row"));
+    }
+  }
+
+  async setAgentVisibility(agentId: AgentId, visibility: AgentVisibility): Promise<void> {
+    // storage is deliberately dumb, same contract as revokeAgent: ownership
+    // and closed-set validation live in the sdk/web layer, this is a single
+    // statement UPDATE, so no partial state and no mid-write interleaving.
+    const result = await this.client.execute({
+      sql: "UPDATE agents SET visibility = ? WHERE public_key = ?",
+      args: [visibility, agentId],
+    });
+    if (result.rowsAffected === 0) {
+      throw codedError("AGENT_NOT_FOUND", `cannot change visibility of unknown agent: ${agentId}`, new Error("no matching row"));
     }
   }
 
@@ -1055,14 +1085,27 @@ export class LibsqlStorageAdapter implements StorageAdapter, SessionKeyBackend {
     return result.rows.map(recordFromRow);
   }
 
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    // the leaderboard's public read: every non-revoked PUBLIC agent row,
+    // oldest first. deliberately the only global listing in the adapter,
+    // visibility-scoped at query level so a private agent can never leave
+    // through a public listing even under a buggy caller (adversarial
+    // review: idor / tenant scoping). the columns are the portable manifest
+    // fields plus the record-level visibility, exactly the getAgent read.
+    const result = await this.client.execute({
+      sql: `SELECT ${AGENT_COLUMNS}
+            FROM agents
+            WHERE revoked_at IS NULL AND visibility = 'public'
+            ORDER BY row_id ASC`,
+    });
+    return result.rows.map(recordFromRow);
+  }
+
   async listAllAgents(): Promise<AgentRecord[]> {
-    // the leaderboard's public read: every non-revoked agent row, oldest
-    // first. deliberately the only global listing in the adapter, and it
-    // never joins session_keys or chat tables, so a public caller cannot
-    // reach another owner's sessions or chats through it (adversarial
-    // review: idor / tenant scoping). the revoked_at filter keeps revoked
-    // identities off the public board; the columns are the portable
-    // manifest fields only, exactly the getAgent read.
+    // the CLI-dashboard read: every non-revoked agent row, oldest first,
+    // deliberately visibility-blind so the user's own private agents stay
+    // visible locally. the moderator-free public board never flows through
+    // here, it uses listPublicAgents above.
     const result = await this.client.execute({
       sql: `SELECT ${AGENT_COLUMNS}
             FROM agents
@@ -1178,6 +1221,9 @@ function recordFromRow(row: SqlRow): AgentRecord {
     manifestVersion: num(row, "manifestVersion"),
     signature: str(row, "signature"),
     revokedAt: nullableStr(row, "revokedAt"),
+    // NOT NULL DEFAULT 'public' column: a malformed value is a schema
+    // violation, never a graceful guess, fail loudly (same as sqlite.ts).
+    visibility: str(row, "visibility") as AgentRecord["visibility"],
   };
 }
 

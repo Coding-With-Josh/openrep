@@ -104,6 +104,14 @@ class FakeStorage implements StorageAdapter {
     this.revokedAgentIds.add(agentId);
   }
 
+  async setAgentVisibility(_agentId: AgentId, _visibility: AgentVisibility): Promise<void> {
+    throw new Error("not on the ingest path");
+  }
+
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    return []; // this fake has no agent records to list
+  }
+
   async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
     throw new Error("not on the ingest path");
   }

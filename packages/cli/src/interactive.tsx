@@ -642,6 +642,7 @@ function placeholderRow(pub: string): UiAgentRow {
       manifestVersion: 0,
       signature: "",
       revokedAt: null,
+      visibility: "public",
     },
     score: null,
   };

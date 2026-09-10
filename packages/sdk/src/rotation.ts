@@ -172,7 +172,11 @@ export async function rotateAgent(
       },
       identityKeypair.privateKey,
     );
-    const successorRecord = toAgentRecord(manifest);
+    // the successor inherits the old record's record-level visibility: a
+    // rotation re-keys the identity but must never silently change whether
+    // the agent is publicly listed (the user's visibility choice outlives
+    // the key material).
+    const successorRecord = toAgentRecord(manifest, record.visibility);
     const rotation: KeyRotationRecord = {
       oldPublicKey: request.agentId,
       newPublicKey: identityKeypair.publicKey,

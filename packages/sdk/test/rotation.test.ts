@@ -55,6 +55,16 @@ class FakeStorage implements StorageAdapter {
     this.byId.set(agentId, { ...existing, revokedAt });
   }
 
+  async setAgentVisibility(agentId: AgentId, visibility: AgentVisibility): Promise<void> {
+    const existing = this.byId.get(agentId);
+    if (existing === undefined) throw codedError("AGENT_NOT_FOUND", "no such agent");
+    this.byId.set(agentId, { ...existing, visibility });
+  }
+
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    return [...this.byId.values()].filter((a) => a.revokedAt === null && a.visibility === "public");
+  }
+
   async rotateAgent(record: AgentRecord, rotation: KeyRotationRecord): Promise<void> {
     if (this.failRotate) throw new Error("disk is on fire");
     if (this.duplicateEveryName) throw codedError("DUPLICATE_NAME", "name already exists");
@@ -160,6 +170,22 @@ describe("rotateAgent", () => {
       { zip215: false },
     );
     expect(auditValid).toBe(true);
+  });
+
+  it("carries the old record's visibility onto the successor (private stays private)", async () => {
+    const storage = new FakeStorage();
+    const created = await createAgent({ storage, visibility: "private" });
+    if (!created.ok) throw new Error("setup failed");
+    const identity = created.value;
+    const timestamp = new Date().toISOString();
+    const signature = await ownerSign({ agentId: identity.publicKey, timestamp }, identity.ownerPrivateKey);
+    const result = await rotateAgent({ agentId: identity.publicKey, timestamp, signature }, storage);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // the successor inherits the visibility policy: rotation re-issues the
+    // identity, it must not silently change who can see the agent.
+    expect(storage.byId.get(result.value.publicKey)!.visibility).toBe("private");
+    expect(storage.byId.get(identity.publicKey)!.visibility).toBe("private");
   });
 
   it("returns a successor identity key that actually signs (corresponds to its manifest public key)", async () => {

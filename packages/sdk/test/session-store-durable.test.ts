@@ -55,6 +55,7 @@ function makeAgent(): AgentRecord {
     manifestVersion: 2,
     signature: "sig",
     revokedAt: null,
+    visibility: "public",
   };
 }
 

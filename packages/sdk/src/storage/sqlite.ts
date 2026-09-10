@@ -45,6 +45,7 @@ import type { SessionKeyBackend, SessionKeyRow } from "../types/security.js";
 import type {
   AccountLink,
   AgentRecord,
+  AgentVisibility,
   AttestationRecord,
   ChatMessage,
   ChatMessageRecord,
@@ -75,7 +76,8 @@ CREATE TABLE IF NOT EXISTS agents (
   created_at TEXT NOT NULL,
   manifest_version INTEGER NOT NULL,
   signature TEXT NOT NULL,
-  revoked_at TEXT
+  revoked_at TEXT,
+  visibility TEXT NOT NULL DEFAULT 'public'
 );
 
 CREATE TABLE IF NOT EXISTS attestations (
@@ -255,6 +257,19 @@ function ensureRevocationSchema(db: DatabaseSync): void {
   }
   if (!columns.some((column) => column.name === "revoked_at")) {
     db.exec("ALTER TABLE agents ADD COLUMN revoked_at TEXT");
+  }
+}
+
+// agent visibility: the visibility column on agents. fresh databases get it
+// from the CREATE TABLE above; pre-existing files get it through the same
+// guarded ALTER pattern, because sqlite has no ADD COLUMN IF NOT EXISTS.
+// the NOT NULL DEFAULT 'public' matters twice: legacy rows are promoted to
+// public on upgrade (the required behavior for pre-created agents), and a
+// row can never hold NULL, so recordFromRow never has to guess a default.
+function ensureVisibilitySchema(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(agents)").all() as Array<{ name: string }>;
+  if (!columns.some((column) => column.name === "visibility")) {
+    db.exec("ALTER TABLE agents ADD COLUMN visibility TEXT NOT NULL DEFAULT 'public'");
   }
 }
 
@@ -536,7 +551,8 @@ const AGENT_COLUMNS = `
   created_at AS createdAt,
   manifest_version AS manifestVersion,
   signature,
-  revoked_at AS revokedAt
+  revoked_at AS revokedAt,
+  visibility
 `;
 
 const ATTESTATION_COLUMNS = `
@@ -586,7 +602,8 @@ const OWNED_AGENT_COLUMNS = `
   a.created_at AS createdAt,
   a.manifest_version AS manifestVersion,
   a.signature,
-  a.revoked_at AS revokedAt
+  a.revoked_at AS revokedAt,
+  a.visibility
 `;
 
 // the users select list, shared so read aliasing cannot drift between the
@@ -643,13 +660,27 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
     }
   }
 
+  async setAgentVisibility(agentId: AgentId, visibility: AgentVisibility): Promise<void> {
+    // the actual visibility write. like revokeAgent above, this does NOT do
+    // ownership checks: sdk-level setVisibility has already validated the
+    // closed-set value, and the web route gates ownership before calling the
+    // sdk. one single-statement update, so no partial state is possible and
+    // a concurrent toggle can never interleave mid-write.
+    const result = this.db
+      .prepare("UPDATE agents SET visibility = ? WHERE public_key = ?")
+      .run(visibility, agentId);
+    if (Number(result.changes) === 0) {
+      throw codedError("AGENT_NOT_FOUND", `cannot change visibility of unknown agent: ${agentId}`, new Error("no matching row"));
+    }
+  }
+
   async saveAgent(record: AgentRecord): Promise<void> {
     assertNoPrivateKey(record);
     try {
       this.db
         .prepare(
-          `INSERT INTO agents (name, public_key, owner_public_key, memory_pointer, permissions, created_at, manifest_version, signature, revoked_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO agents (name, public_key, owner_public_key, memory_pointer, permissions, created_at, manifest_version, signature, revoked_at, visibility)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .run(
           record.name,
@@ -661,6 +692,7 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
           record.manifestVersion,
           record.signature,
           record.revokedAt,
+          record.visibility,
         );
     } catch (err) {
       // the schema unique constraint on agents.name is the authoritative
@@ -1017,9 +1049,8 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
     // ownership is resolved from the session key ledger at query level:
     // listing an owner's agents is exactly "agents that owner holds a
     // session key row for". there is no owner-parameterized global list
-    // call; the one global listing, listAllAgents, is the leaderboard's
-    // deliberate public read and needs no owner (adversarial review: idor /
-    // tenant scoping).
+    // call; visibility never applies here, an owner always sees its own
+    // private agents (adversarial review: idor / tenant scoping).
     const rows = this.db
       .prepare(
         `SELECT ${OWNED_AGENT_COLUMNS}
@@ -1032,14 +1063,31 @@ class SqliteStorageAdapter implements StorageAdapter, SessionKeyBackend {
     return rows.map(recordFromRow);
   }
 
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    // the leaderboard's public read: every non-revoked PUBLIC agent row,
+    // oldest first. deliberately the only global listing in the adapter,
+    // and it never joins session_keys or chat tables, so a public caller
+    // cannot reach another owner's sessions or chats through it
+    // (adversarial review: idor / tenant scoping). the revoked_at filter
+    // keeps revoked identities off the board and the visibility literal
+    // keeps private agents off it; the columns are the portable manifest
+    // fields plus the record-level visibility, exactly the getAgent read.
+    const rows = this.db
+      .prepare(
+        `SELECT ${AGENT_COLUMNS}
+         FROM agents
+         WHERE revoked_at IS NULL AND visibility = 'public'
+         ORDER BY row_id ASC`,
+      )
+      .all();
+    return rows.map(recordFromRow);
+  }
+
   async listAllAgents(): Promise<AgentRecord[]> {
-    // the leaderboard's public read: every non-revoked agent row, oldest
-    // first. deliberately the only global listing in the adapter, and it
-    // never joins session_keys or chat tables, so a public caller cannot
-    // reach another owner's sessions or chats through it (adversarial
-    // review: idor / tenant scoping). the revoked_at filter keeps revoked
-    // identities off the public board; the columns are the portable
-    // manifest fields only, exactly the getAgent read.
+    // the CLI-dashboard read: every non-revoked agent row, oldest first,
+    // deliberately visibility-blind so the user's own private agents stay
+    // visible locally. the moderator-free public board never flows through
+    // here, it uses listPublicAgents above.
     const rows = this.db
       .prepare(
         `SELECT ${AGENT_COLUMNS}
@@ -1164,6 +1212,10 @@ function recordFromRow(row: SqlRow): AgentRecord {
     signature: str(row, "signature"),
     // null means not revoked; sqlite never stores an empty string here.
     revokedAt: nullableStr(row, "revokedAt"),
+    // the column is NOT NULL DEFAULT 'public', so a malformed or missing
+    // value is a schema violation, never a graceful guess: fail loudly
+    // rather than silently deciding visibility for the caller.
+    visibility: str(row, "visibility") as AgentRecord["visibility"],
   };
 }
 
@@ -1253,6 +1305,7 @@ export function createSqliteStorage(databasePath: string): StorageAdapter & Sess
     db.exec(CHAT_INDEXES);
     ensureIdempotencySchema(db);
     ensureRevocationSchema(db);
+    ensureVisibilitySchema(db);
     ensureExternalVerificationSchema(db);
     ensureChatAttestationSchema(db);
     backfillChatAttestationLinks(db);

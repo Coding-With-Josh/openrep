@@ -10,8 +10,22 @@ import type { RegisteredSource } from "./sources";
 export interface AgentRecord extends Omit<AgentManifest, "ownerPublicKey"> {
   ownerPublicKey: string | null; // null only on pre-revocation-pass legacy rows
   revokedAt: string | null; // iso 8601 utc when revoked, null until then
+  // record-level visibility, deliberately NOT a signed manifest field: the
+  // whole point is that the user can flip it on the web or cli without
+  // re-signing, without the identity private key, and without a
+  // manifestVersion bump. "public" means the agent appears on the leaderboard
+  // (listPublicAgents, the only global listing); "private" means unlisted and
+  // gated from non-owners by the web layer. the closed set is enforced at the
+  // sdk write entry points (createAgent, setAgentVisibility); the schema
+  // column is NOT NULL DEFAULT 'public' so every pre-existing agent becomes
+  // public exactly as required, never null and never undefined.
+  visibility: AgentVisibility;
   rowId?: number; // internal index assigned by storage at insert time, not part of the portable identity
 }
+
+// the closed set of visibility states. kept as a union so exhaustive checks
+// fail at compile time when a new state is added and one branch is forgotten.
+export type AgentVisibility = "public" | "private";
 
 // an attestation as persisted.
 export interface AttestationRecord extends Attestation {
@@ -150,16 +164,31 @@ export interface StorageAdapter {
   // list agents it actually holds a session key row for, never a global
   // agent listing (adversarial review: idor / tenant scoping).
   listOwnedAgents(ownerUserId: string): Promise<AgentRecord[]>;
-  // the leaderboard's public read: every non-revoked agent, oldest first.
-  // this is the ONLY global listing in the adapter and it is a deliberate
-  // public-read exception to the owner-scoping rule. the returned rows are
-  // agent manifest records only, exactly the getAgent read; session keys,
-  // chat sessions, and chat messages live in separate tables and are never
+  // the actual visibility write, an internal storage method: performs the
+  // UPDATE that sets the visibility column. called only from
+  // setVisibility() in the sdk layer, AFTER the caller has supplied a
+  // closed-set value and (on the web) the ownership gate has already
+  // passed. storage itself never re-verifies ownership or signatures, that
+  // is the sdk's and the web route's job. when no row matches,
+  // implementations must throw an error whose code property is exactly
+  // "AGENT_NOT_FOUND" (mirror of revokeAgent).
+  setAgentVisibility(agentId: AgentId, visibility: AgentVisibility): Promise<void>;
+  // the leaderboard's public read: every non-revoked PUBLIC agent, oldest
+  // first. this is the ONLY global listing in the adapter and it is a
+  // deliberate public-read exception to the owner-scoping rule: nothing
+  // private ever leaves through it, and the returned rows are agent
+  // manifest records only, exactly the getAgent read; session keys, chat
+  // sessions, and chat messages live in separate tables and are never
   // joined, so a public caller cannot reach another owner's sessions or
   // chats through it. callers that need owner-relative reads must keep
   // using listOwnedAgents; there is still no owner parameter anywhere that
   // could be substituted for another user's (adversarial review: idor /
   // tenant scoping).
+  listPublicAgents(): Promise<AgentRecord[]>;
+  // every agent row, non-revoked, oldest first. deliberately still global
+  // and visibility-blind: the cli dashboard shows the user's own private
+  // agents and needs to see them, so the leaderboard filter lives in
+  // listPublicAgents, never here.
   listAllAgents(): Promise<AgentRecord[]>;
   // web account layer: users and their oauth/credentials account links.
   // these tables are web-owned (the sdk exposes the storage primitives, the

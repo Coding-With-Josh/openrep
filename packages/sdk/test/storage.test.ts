@@ -35,6 +35,7 @@ function makeAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     manifestVersion: 2,
     signature: "sig",
     revokedAt: null,
+    visibility: "public",
     ...overrides,
   };
 }
@@ -673,6 +674,59 @@ describe("sqlite storage adapter: public agent listing", () => {
     expect(listed).toEqual(await storage.getAgent(agent.publicKey));
     expect(listed).not.toHaveProperty("sessionKey");
     expect(listed).not.toHaveProperty("chatMessages");
+  });
+});
+
+describe("sqlite storage adapter: visibility", () => {
+  it("round trips a private record and reads it back by canonical id", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const privateAgent = makeAgent({ name: "priv-roundtrip.agent", visibility: "private" });
+    await storage.saveAgent(privateAgent);
+    expect((await storage.getAgent(privateAgent.publicKey))!.visibility).toBe("private");
+    // the schema NOT NULL DEFAULT 'public' promotion itself is pinned by the
+    // legacy-upgrade tests: this adapter's INSERT always supplies the column
+    // explicitly (the sdk default is public before storage ever runs), so a
+    // missing field is a bind error here, never a silent NULL.
+  });
+
+  it("setAgentVisibility flips the column and round trips, and unknown ids throw AGENT_NOT_FOUND", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const agent = makeAgent({ name: "flip.agent" });
+    await storage.saveAgent(agent);
+    await storage.setAgentVisibility(agent.publicKey, "private");
+    expect((await storage.getAgent(agent.publicKey))!.visibility).toBe("private");
+    await storage.setAgentVisibility(agent.publicKey, "public");
+    expect((await storage.getAgent(agent.publicKey))!.visibility).toBe("public");
+    await expect(storage.setAgentVisibility("pk-missing", "private")).rejects.toMatchObject({ code: "AGENT_NOT_FOUND" });
+  });
+
+  it("listPublicAgents returns only non-revoked public agents, oldest first", async () => {
+    const storage = createSqliteStorage(":memory:");
+    const pubA = makeAgent({ name: "pub-a.agent", createdAt: "2026-01-01T00:00:00.000Z" });
+    const priv = makeAgent({
+      name: "priv.agent",
+      publicKey: "pk-priv",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      visibility: "private",
+    });
+    const pubB = makeAgent({ name: "pub-b.agent", createdAt: "2026-01-03T00:00:00.000Z" });
+    const revokedPub = makeAgent({ name: "revoked-pub.agent", publicKey: "pk-revoked-pub" });
+    await storage.saveAgent(pubA);
+    await storage.saveAgent(priv);
+    await storage.saveAgent(pubB);
+    await storage.saveAgent(revokedPub);
+    await storage.revokeAgent(revokedPub.publicKey, "2026-01-04T00:00:00.000Z");
+    // the private agent sits between the two publics in insertion order; if
+    // the filter were a CLI-facing blind listing it would leak here. the
+    // public read must exclude it without disturbing the public ordering.
+    expect((await storage.listPublicAgents()).map((a) => a.publicKey)).toEqual([pubA.publicKey, pubB.publicKey]);
+    // listAllAgents stays visibility-blind: the user's own private agents
+    // must remain visible to the cli dashboard.
+    expect((await storage.listAllAgents()).map((a) => a.publicKey)).toEqual([
+      pubA.publicKey,
+      priv.publicKey,
+      pubB.publicKey,
+    ]);
   });
 });
 

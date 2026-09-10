@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { signAsync } from "@noble/ed25519";
 import { describe, expect, it } from "vitest";
-import { attest, canonicalize, createAgent, createSqliteStorage, revokeAgent, verifyAttestation } from "../src/index.js";
+import { attest, canonicalize, createAgent, createSqliteStorage, revokeAgent, setVisibility, verifyAttestation } from "../src/index.js";
 import type { AgentRecord, AttestationRecord, RevocationRequest } from "../src/index.js";
 import { bytesToHex, hexToBytes } from "../src/hex.js";
 
@@ -353,6 +353,13 @@ describe("revocation + sqlite storage integration", () => {
       const storage = createSqliteStorage(dbPath);
       createSqliteStorage(dbPath);
 
+      // the visibility column landed too, and the NOT NULL DEFAULT 'public'
+      // promoted the pre-existing row exactly as required for pre-created
+      // agents: it reads back public without any manual backfill.
+      const legacyRead: AgentRecord | null = await storage.getAgent(legacyId);
+      expect(legacyRead).not.toBeNull();
+      expect(legacyRead!.visibility).toBe("public");
+
       // a legacy row has no owner key, so revocation fails closed with
       // OWNER_KEY_MISSING even for a well-formed request.
       const legacy = { agentId: legacyId, timestamp: new Date().toISOString(), signature: "ab".repeat(64) };
@@ -374,6 +381,14 @@ describe("revocation + sqlite storage integration", () => {
       const good = await revokeAgent(await ownerRevocationRequest(publicKey, ownerPrivateKey), storage);
       expect(good.ok).toBe(true);
       expect((await storage.getAgent(publicKey))!.revokedAt).not.toBeNull();
+      // and the visibility column is writable on the upgraded db: a fresh
+      // agent defaults public, and setVisibility flips it to private.
+      const second = await createAgent({ storage });
+      expect(second.ok).toBe(true);
+      if (!second.ok) return;
+      const flip = await setVisibility(second.value.publicKey, "private", storage);
+      expect(flip.ok).toBe(true);
+      expect((await storage.getAgent(second.value.publicKey))!.visibility).toBe("private");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

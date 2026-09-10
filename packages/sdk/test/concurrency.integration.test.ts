@@ -61,6 +61,7 @@ const CHILD_SCRIPT = `
           manifestVersion: 2,
           signature: "sig",
           revokedAt: null,
+          visibility: "public",
         });
         await storage.saveAttestation({
           rowId: 0,

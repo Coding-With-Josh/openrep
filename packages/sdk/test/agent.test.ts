@@ -6,10 +6,11 @@ import {
   canonicalize,
   createAgent,
   generateName,
+  setVisibility,
   verifyManifest,
 } from "../src/index.js";
 import type { AgentRecord, KeyRotationRecord, Paginated, PaginationParams, RegisteredSource, StorageAdapter } from "../src/index.js";
-import type { AgentId, AgentManifest, AgentPermission } from "../src/index.js";
+import type { AgentId, AgentManifest, AgentPermission, AgentVisibility } from "../src/index.js";
 import type { AttestationRecord } from "../src/index.js";
 import { bytesToHex, hexToBytes } from "../src/hex.js";
 
@@ -33,6 +34,8 @@ class FakeStorage implements StorageAdapter {
   failSavesWithGeneric = false;
   failGetAgent = false; // simulates a flaky storage read for the revocation gate
   revokeCount = 0;
+  visibilityCount = 0;
+  failVisibility = false; // simulates a generic storage failure on the visibility write
 
   async getAgent(agentId: AgentId): Promise<AgentRecord | null> {
     if (this.failGetAgent) throw new Error("read failed on purpose");
@@ -61,6 +64,18 @@ class FakeStorage implements StorageAdapter {
     const existing = this.byId.get(agentId);
     if (existing === undefined) throw notFoundError();
     this.byId.set(agentId, { ...existing, revokedAt });
+  }
+
+  async setAgentVisibility(agentId: AgentId, visibility: AgentVisibility): Promise<void> {
+    this.visibilityCount++;
+    if (this.failVisibility) throw new Error("disk is on fire");
+    const existing = this.byId.get(agentId);
+    if (existing === undefined) throw notFoundError();
+    this.byId.set(agentId, { ...existing, visibility });
+  }
+
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    return [...this.byId.values()].filter((a) => a.revokedAt === null && a.visibility === "public");
   }
 
   async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
@@ -197,6 +212,8 @@ describe("createAgent", () => {
     { memoryPointer: "ftp://nope" },
     { permissions: ["admin"] as unknown as AgentPermission[] },
     { permissions: ["attest:self", "attest:self"] },
+    { visibility: "PENDING" },
+    { visibility: "public " },
   ])("rejects invalid option %# with INVALID_INPUT before any storage work", async (options) => {
     const storage = new FakeStorage();
     const result = await createAgent({ storage, ...options });
@@ -204,6 +221,66 @@ describe("createAgent", () => {
     if (!result.ok) expect(result.error.code).toBe("INVALID_INPUT");
     expect(storage.saveCount).toBe(0); // fail fast: nothing was persisted
     expect(storage.getByNameCount).toBe(0); // and no name was even generated
+  });
+
+  it("defaults a new agent to public and honors an explicit private choice", async () => {
+    const storage = new FakeStorage();
+    const auto = await createAgent({ storage });
+    expect(auto.ok).toBe(true);
+    if (!auto.ok) return;
+    expect(storage.byId.get(auto.value.publicKey)!.visibility).toBe("public");
+
+    const storage2 = new FakeStorage();
+    const explicit = await createAgent({ storage: storage2, visibility: "private" });
+    expect(explicit.ok).toBe(true);
+    if (!explicit.ok) return;
+    expect(storage2.byId.get(explicit.value.publicKey)!.visibility).toBe("private");
+  });
+});
+
+describe("setVisibility", () => {
+  it("flips an agent's visibility both directions through storage", async () => {
+    const storage = new FakeStorage();
+    const created = await createAgent({ storage });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const { publicKey } = created.value;
+    const priv = await setVisibility(publicKey, "private", storage);
+    expect(priv.ok).toBe(true);
+    expect(storage.byId.get(publicKey)!.visibility).toBe("private");
+    expect(storage.visibilityCount).toBe(1);
+    const pub = await setVisibility(publicKey, "public", storage);
+    expect(pub.ok).toBe(true);
+    expect(storage.byId.get(publicKey)!.visibility).toBe("public");
+    expect(storage.visibilityCount).toBe(2);
+  });
+
+  it("rejects out-of-set values and malformed ids with INVALID_INPUT before storage", async () => {
+    const storage = new FakeStorage();
+    const badValue = await setVisibility("ab".repeat(32), "PENDING" as AgentVisibility, storage);
+    expect(badValue.ok).toBe(false);
+    if (!badValue.ok) expect(badValue.error.code).toBe("INVALID_INPUT");
+    const badId = await setVisibility("not-hex", "private", storage);
+    expect(badId.ok).toBe(false);
+    if (!badId.ok) expect(badId.error.code).toBe("INVALID_INPUT");
+    expect(storage.visibilityCount).toBe(0); // fail fast: no storage work ran
+  });
+
+  it("returns AGENT_NOT_FOUND for an unknown agent and STORAGE_WRITE_FAILED on a generic storage failure", async () => {
+    const storage = new FakeStorage();
+    const missing = await setVisibility("ab".repeat(32), "private", storage);
+    expect(missing.ok).toBe(false);
+    if (!missing.ok) expect(missing.error.code).toBe("AGENT_NOT_FOUND");
+
+    const created = await createAgent({ storage });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    storage.failVisibility = true;
+    const failed = await setVisibility(created.value.publicKey, "private", storage);
+    expect(failed.ok).toBe(false);
+    if (!failed.ok) expect(failed.error.code).toBe("STORAGE_WRITE_FAILED");
+    // the raw storage error (stack, connection details) never leaks
+    expect(failed.ok || failed.error.message).not.toContain("disk is on fire");
   });
 });
 

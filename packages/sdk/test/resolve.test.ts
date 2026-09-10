@@ -37,6 +37,15 @@ class FakeStorage implements StorageAdapter {
     throw new Error("resolve must not revoke");
   }
 
+  async setAgentVisibility(_agentId: AgentId, _visibility: AgentVisibility): Promise<void> {
+    throw new Error("resolve must not mutate");
+  }
+
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    // resolve must never read a global listing itself; skip visibility
+    throw new Error("resolve must not list agents globally");
+  }
+
   async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
     throw new Error("not on the resolve path");
   }

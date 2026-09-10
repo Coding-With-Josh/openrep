@@ -1,6 +1,6 @@
 import { keygenAsync, signAsync, verifyAsync } from "@noble/ed25519";
 import type { AgentId, AgentIdentity, AgentManifest, AgentPermission } from "./types/identity.js";
-import type { AgentRecord, StorageAdapter } from "./types/storage.js";
+import type { AgentRecord, AgentVisibility, StorageAdapter } from "./types/storage.js";
 import type { WrapAgentOptions, WrappedRunResult } from "./types/attestation.js";
 import type { WrapAgentParams } from "./types/providers.js";
 import type { Result, VerificationResult } from "./types/errors.js";
@@ -69,6 +69,10 @@ export interface CreateAgentOptions {
   name?: string; // caller supplied name; omitted to auto-generate one
   memoryPointer?: string | null; // ipfs:// or https:// uri, null when unset
   permissions?: AgentPermission[]; // closed union, default is DEFAULT_PERMISSIONS
+  // record-level visibility, default "public". NOT part of the signed
+  // manifest: it lives on the AgentRecord only, so the caller can flip it
+  // later with setVisibility without re-signing anything.
+  visibility?: AgentVisibility;
 }
 
 function isValidName(value: unknown): value is string {
@@ -91,13 +95,24 @@ function isValidPermissions(value: unknown): value is AgentPermission[] {
   return value.every((p) => AGENT_PERMISSIONS.includes(p as AgentPermission));
 }
 
+// guard: visibility is a closed union of exactly two states. no trimming, no
+// coercion, no case folding: "public " or "Public" or "PENDING" are all
+// rejected, so a crafted or mistyped value can never reach the storage
+// column (adversarial review: state injection).
+function isValidVisibility(value: unknown): value is AgentVisibility {
+  return value === "public" || value === "private";
+}
+
 // builds the AgentRecord from manifest fields by explicit pick, never by
 // spreading an AgentIdentity. the record type structurally cannot carry a
 // private key, and this construction keeps it that way even if AgentIdentity
 // gains fields later (adversarial review: key custody, no persistence path
 // can ever write key material). exported for rotateAgent, which must build a
 // successor record through the exact same construction.
-export function toAgentRecord(manifest: AgentManifest): AgentRecord {
+// visibility is record-level (never signed), so it is a second explicit
+// parameter defaulting to public; rotateAgent passes the old record's value
+// so a rotation never silently changes the agent's public/private state.
+export function toAgentRecord(manifest: AgentManifest, visibility: AgentVisibility = "public"): AgentRecord {
   return {
     name: manifest.name,
     publicKey: manifest.publicKey,
@@ -112,6 +127,7 @@ export function toAgentRecord(manifest: AgentManifest): AgentRecord {
     // after the owner-key authorization has passed. null is the honest
     // default, never an omitted property.
     revokedAt: null,
+    visibility,
   };
 }
 
@@ -186,6 +202,10 @@ export async function createAgent(options: CreateAgentOptions): Promise<Result<A
   if (!isValidPermissions(permissions)) {
     return failure("INVALID_INPUT", "permissions must come from the closed set and contain no duplicates");
   }
+  const visibility = options.visibility === undefined ? "public" : options.visibility;
+  if (!isValidVisibility(visibility)) {
+    return failure("INVALID_INPUT", 'visibility must be "public" or "private"');
+  }
 
   // TWO keypairs from the webcrypto backed csprng: the identity key for
   // day-to-day attestation signing, and a separate owner key that alone
@@ -229,7 +249,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Result<A
       { name: explicitName, publicKey, ownerPublicKey, memoryPointer, permissions, createdAt, manifestVersion },
       identityKeypair.privateKey,
     );
-    const record = toAgentRecord(manifest);
+    const record = toAgentRecord(manifest, visibility);
     const saveResult = await saveAgentWithConflictHandling(options.storage, record);
     if (!saveResult.ok) return saveResult;
     return ok({ ...manifest, privateKey: identityKeypair.privateKey, ownerPrivateKey: ownerKeypair.privateKey });
@@ -257,7 +277,7 @@ export async function createAgent(options: CreateAgentOptions): Promise<Result<A
       { name, publicKey, ownerPublicKey, memoryPointer, permissions, createdAt, manifestVersion },
       identityKeypair.privateKey,
     );
-    const record = toAgentRecord(manifest);
+    const record = toAgentRecord(manifest, visibility);
     const saveResult = await saveAgentWithConflictHandling(options.storage, record);
     if (saveResult.ok) return ok({ ...manifest, privateKey: identityKeypair.privateKey, ownerPrivateKey: ownerKeypair.privateKey });
     if (saveResult.error.code === "DUPLICATE_NAME") continue; // constraint fired, retry with a fresh name
@@ -402,6 +422,44 @@ export async function verifyManifest(manifest: AgentManifest, storage: StorageAd
     // example a strict verification failure surfaced as an exception) fails
     // as invalid, never throws out of verifyManifest.
     return verified(false, "manifest could not be verified");
+  }
+}
+
+/**
+ * Flips an agent's record-level visibility. deliberately a light operation:
+ * the whole point of keeping visibility out of the signed manifest is that
+ * the user can change it at will, no identity private key, no signature, no
+ * manifestVersion bump. storage.write is a single UPDATE, so it is atomic
+ * and there is no check-then-act window to race.
+ *
+ * the sdk does NOT decide who may call this: ownership is enforced by the
+ * caller (the web route gates on the session-key pair before calling; the
+ * cli is a single-user local tool). this function validates the closed-set
+ * value and the agent id shape, then translates storage failures into typed
+ * Results exactly like every other sdk entry point.
+ */
+export async function setVisibility(
+  agentId: AgentId,
+  visibility: AgentVisibility,
+  storage: StorageAdapter,
+): Promise<Result<void>> {
+  if (!isValidVisibility(visibility)) {
+    return failure("INVALID_INPUT", 'visibility must be "public" or "private"');
+  }
+  if (!isLowercaseHexOfLength(agentId, 32)) {
+    return failure("INVALID_INPUT", "agentId must be a 32-byte lowercase hex agent id");
+  }
+  try {
+    await storage.setAgentVisibility(agentId, visibility);
+    return ok(undefined);
+  } catch (err) {
+    if (typeof err === "object" && err !== null && (err as { code?: unknown }).code === "AGENT_NOT_FOUND") {
+      return failure("AGENT_NOT_FOUND", `no agent with id ${agentId}`);
+    }
+    // fail closed: a generic storage failure is never reported as success,
+    // and the raw error (which may carry stack traces or connection details)
+    // never leaks into the public Result.
+    return failure("STORAGE_WRITE_FAILED", "failed to update the agent's visibility");
   }
 }
 

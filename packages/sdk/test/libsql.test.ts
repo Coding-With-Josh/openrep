@@ -40,6 +40,7 @@ function makeAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     manifestVersion: 2,
     signature: "sig",
     revokedAt: null,
+    visibility: "public",
     ...overrides,
   };
 }
@@ -395,6 +396,15 @@ describe("libsql storage adapter: bootstrap and upgrade", () => {
 
       const record = makeAgent({ name: "upgraded.agent" });
       await storage.saveAgent(record);
+      // the visibility column landed too, and its NOT NULL DEFAULT 'public'
+      // promoted the pre-existing schema: a fresh record saves fine because
+      // the column exists, and... the pre-existing ROW promotion is pinned
+      // on the sqlite side (integration.test.ts legacy fixture); here the
+      // writable column is proven directly.
+      await storage.setAgentVisibility(record.publicKey, "private");
+      expect((await storage.getAgent(record.publicKey))!.visibility).toBe("private");
+      await storage.setAgentVisibility(record.publicKey, "public");
+      expect((await storage.getAgent(record.publicKey))!.visibility).toBe("public");
       await storage.saveAttestation(makeAttestation(record.publicKey, { id: "att-upgraded", idempotencyKey: "upgrade-key" }));
       // the composite index really landed: same (agent, key) now collides
       await expect(
@@ -766,6 +776,50 @@ describe("libsql storage adapter: public agent listing", () => {
     const list = await storage.listAllAgents();
     expect(list.map((a) => a.publicKey)).toEqual(["pk-libsql-live"]);
     expect(list[0]).toEqual(await storage.getAgent("pk-libsql-live"));
+    await storage.close();
+  });
+});
+
+describe("libsql storage adapter: visibility", () => {
+  it("round trips a private record and setAgentVisibility flips the column", async () => {
+    const storage = await makeStorage();
+    const privateAgent = makeAgent({ name: "libsql-priv-roundtrip.agent", visibility: "private" });
+    await storage.saveAgent(privateAgent);
+    expect((await storage.getAgent(privateAgent.publicKey))!.visibility).toBe("private");
+    await storage.setAgentVisibility(privateAgent.publicKey, "public");
+    expect((await storage.getAgent(privateAgent.publicKey))!.visibility).toBe("public");
+    await expect(storage.setAgentVisibility("pk-missing", "private")).rejects.toMatchObject({
+      code: "AGENT_NOT_FOUND",
+    });
+    await storage.close();
+  });
+
+  it("listPublicAgents returns only non-revoked public agents, oldest first", async () => {
+    const storage = await makeStorage();
+    const pubA = makeAgent({ name: "libsql-pub-a.agent", createdAt: "2026-01-01T00:00:00.000Z" });
+    const priv = makeAgent({
+      name: "libsql-priv.agent",
+      publicKey: "pk-libsql-priv",
+      createdAt: "2026-01-02T00:00:00.000Z",
+      visibility: "private",
+    });
+    const pubB = makeAgent({ name: "libsql-pub-b.agent", createdAt: "2026-01-03T00:00:00.000Z" });
+    const revokedPub = makeAgent({ name: "libsql-revoked-pub.agent", publicKey: "pk-libsql-revoked-pub" });
+    await storage.saveAgent(pubA);
+    await storage.saveAgent(priv);
+    await storage.saveAgent(pubB);
+    await storage.saveAgent(revokedPub);
+    await storage.revokeAgent(revokedPub.publicKey, "2026-01-04T00:00:00.000Z");
+    // the private agent sits between the two publics in insertion order; the
+    // public read must exclude it and keep the public ordering intact.
+    expect((await storage.listPublicAgents()).map((a) => a.publicKey)).toEqual([pubA.publicKey, pubB.publicKey]);
+    // listAllAgents stays visibility-blind: the cli dashboard still sees the
+    // user's own private agents.
+    expect((await storage.listAllAgents()).map((a) => a.publicKey)).toEqual([
+      pubA.publicKey,
+      priv.publicKey,
+      pubB.publicKey,
+    ]);
     await storage.close();
   });
 });

@@ -86,6 +86,7 @@ describe("runAttestNative", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
 
     const outcome = await runAttestNative(ctx, record, "do the thing", "did the thing", [{ tool: "calculator", input: { expression: "1+1" } }]);
@@ -112,6 +113,7 @@ describe("runAttestNative", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
 
     const first = await runAttestNative(ctx, record, "same work", "same output", undefined, "turn-key-1");
@@ -139,6 +141,7 @@ describe("runRevokeAgent", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
 
     const outcome = await runRevokeAgent(ctx, record);
@@ -164,6 +167,7 @@ describe("runRevokeAgent", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
 
     const first = await runRevokeAgent(ctx, record);
@@ -190,6 +194,7 @@ describe("runRevokeAgent", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
     const outcome = await runRevokeAgent(ctx, record, "not-hex");
     const error = actionOutcomeToCliError(outcome);
@@ -212,6 +217,7 @@ describe("runVerifyAgent", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
     await runAttestNative(ctx, record, "work", "output");
 
@@ -237,6 +243,7 @@ describe("runVerifyAgent", () => {
       manifestVersion: created.value.manifestVersion,
       signature: created.value.signature,
       revokedAt: null,
+      visibility: "public",
     };
     await runAttestNative(ctx, record, "work", "output");
 

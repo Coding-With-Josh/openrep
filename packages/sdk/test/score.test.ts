@@ -55,6 +55,16 @@ class FakeStorage implements StorageAdapter {
     this.byId.set(agentId, { ...existing, revokedAt });
   }
 
+  async setAgentVisibility(agentId: AgentId, visibility: AgentVisibility): Promise<void> {
+    const existing = this.byId.get(agentId);
+    if (existing === undefined) throw codedError("AGENT_NOT_FOUND", "no such agent");
+    this.byId.set(agentId, { ...existing, visibility });
+  }
+
+  async listPublicAgents(): Promise<AgentRecord[]> {
+    return [...this.byId.values()].filter((a) => a.revokedAt === null && a.visibility === "public");
+  }
+
   async rotateAgent(_record: AgentRecord, _rotation: KeyRotationRecord): Promise<void> {
     throw new Error("not on the score path");
   }
