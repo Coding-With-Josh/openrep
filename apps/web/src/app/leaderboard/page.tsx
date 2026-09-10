@@ -4,6 +4,8 @@ import { ArrowRight } from "lucide-react";
 import { getScore } from "@openrepso/sdk";
 import { createRequestContext } from "@/server/storage";
 import AgentAvatar from "@/components/ui/agent-avatar";
+import { BorderBeamButton } from "@/components/effects/border-beam";
+import { useTheme } from "next-themes";
 
 export const dynamic = "force-dynamic";
 
@@ -27,12 +29,14 @@ type BoardRow = {
 const shortId = (id: string) => `${id.slice(0, 4)}...${id.slice(-4)}`;
 
 const statusText = (row: BoardRow) => {
-  const parts = row.breakdown.map((b) => `${b.source} ${b.value.toFixed(1)}`).join(" · ");
+  const parts = row.breakdown
+    .map((b) => `${b.source} ${b.value.toFixed(1)}`)
+    .join(" · ");
   return parts || "no attestations yet";
 };
 
 export default async function LeaderboardPage() {
-  let rows: BoardRow[] = [];
+  const rows: BoardRow[] = [];
   let omitted = 0;
   let error: string | null = null;
   try {
@@ -65,7 +69,10 @@ export default async function LeaderboardPage() {
     error = "the leaderboard is temporarily unavailable";
   }
 
-  rows.sort((a, b) => (b.composite - a.composite) || a.createdAt.localeCompare(b.createdAt));
+  rows.sort(
+    (a, b) =>
+      b.composite - a.composite || a.createdAt.localeCompare(b.createdAt),
+  );
 
   return (
     <div className="bg-white text-black min-h-screen flex flex-col items-center justify-center px-6 py-10 relative overflow-hidden dark:bg-neutral-950 dark:text-neutral-100">
@@ -110,7 +117,9 @@ export default async function LeaderboardPage() {
               {rows.map((row, index) => (
                 <Link
                   key={row.id}
-                  href={`/agents/${encodeURIComponent(row.id)}/score?name=${encodeURIComponent(
+                  href={`/agents/${encodeURIComponent(
+                    row.id,
+                  )}/score?name=${encodeURIComponent(
                     row.name,
                   )}&from=leaderboard`}
                   className="group flex items-center gap-4 p-3 rounded-lg hover:bg-neutral-50 transition-all duration-200 dark:hover:bg-white/5"
@@ -120,7 +129,11 @@ export default async function LeaderboardPage() {
                   </span>
                   <div className="relative shrink-0">
                     <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden dark:from-neutral-800 dark:to-neutral-700">
-                      <AgentAvatar name={row.name} seed={row.id} className="w-full h-full" />
+                      <AgentAvatar
+                        name={row.name}
+                        seed={row.id}
+                        className="w-full h-full"
+                      />
                     </div>
                   </div>
                   <div className="flex-1 min-w-0">
@@ -134,9 +147,14 @@ export default async function LeaderboardPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <span className="rounded-full text-md font-mono tracking-tight font-medium text-neutral-700 bg-white border border-neutral-200 px-3 py-1.5 dark:bg-neutral-800 dark:border-neutral-700 dark:text-neutral-200">
+                    <BorderBeamButton
+                      beamSize="pulse-inner"
+                      theme="auto"
+                      className="rounded-full text-md font-mono tracking-tight font-medium text-neutral-700 bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-200"
+                    >
+                      <span className="size-2 rounded-full bg-emerald-500"></span>
                       {row.composite.toFixed(2)}
-                    </span>
+                    </BorderBeamButton>
                     <ArrowRight className="w-4 h-4 text-neutral-300 group-hover:text-neutral-500 group-hover:translate-x-1 transition-all duration-200 dark:text-neutral-600 dark:group-hover:text-neutral-400" />
                   </div>
                 </Link>
