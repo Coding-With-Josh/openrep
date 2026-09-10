@@ -65,6 +65,12 @@ export interface AttestationInput {
 export interface WrapAgentOptions {
   source?: string; // defaults to "native"
   idempotencyKey?: string; // lets retries collapse into one attestation
+  // live progress hook fired right after each tool executes during the
+  // loop. intended for interactive surfaces (a tui painting tool calls as
+  // they run); when absent the loop behaves exactly as before. the payload
+  // is the same shape the loop feeds attest(), so a consumer can render
+  // "▸ web_fetch fetching url" without parsing the model's raw response.
+  onToolCall?: (toolCall: { tool: string; input: unknown; output?: unknown }) => void;
 }
 
 // options for a single ingest() call, mirrored from attest(): the same

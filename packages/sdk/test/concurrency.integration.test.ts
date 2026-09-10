@@ -156,14 +156,16 @@ beforeAll(() => {
   // compile the sdk sources into the private build dir (tsc only, never runs
   // tests, so this cannot recurse). fails the suite loudly if the build
   // breaks. the emitted layout preserves rootDir = src, so the adapter entry
-  // lands at <buildDir>/storage/sqlite.js.
+  // lands at <buildDir>/storage/sqlite.js. the default 10s hook timeout is a
+  // flake source on loaded machines (a cold full-sdk tsc build takes ~5-6s
+  // and can double under worker contention), so the hook gets a real budget.
   execFileSync(
     "pnpm",
     ["exec", "tsc", "-p", "tsconfig.json", "--outDir", buildDir],
-    { cwd: PKG, stdio: "pipe" },
+    { cwd: PKG, stdio: "pipe", timeout: 60_000 },
   );
   adapterUrl = pathToFileURL(join(buildDir, "storage", "sqlite.js")).href;
-});
+}, 60_000);
 
 afterAll(() => {
   rmSync(dir, { recursive: true, force: true });

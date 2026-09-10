@@ -1,9 +1,10 @@
 import { Command } from "commander";
-import { attest, type ToolCall } from "@openrepso/sdk";
+import { type ToolCall } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
 import { resolveAgentRef } from "../agent-ref.js";
-import { failSdkError, failSdkCode, handleCustodyError } from "./helpers.js";
+import { failSdkCode, handleCustodyError } from "./helpers.js";
+import { actionOutcomeToCliError, isActionOutcomeOk, runAttestNative } from "./actions.js";
 import type { AttestCommandArgs } from "../types.js";
 
 export function attestCommand(ctx: CliContext): Command {
@@ -40,34 +41,15 @@ export function attestCommand(ctx: CliContext): Command {
           toolsUsed = parsed as ToolCall[];
         }
 
-        const resolution = await ctx.custody.resolveIdentityKey(record.publicKey);
-        if (resolution === null) {
-          failSdkCode(
-            "KEYCHAIN_UNAVAILABLE",
-            `no identity signing key available for agent ${record.publicKey}; set OPENREP_SIGNING_KEY or run "openrep create" for this agent first`,
-          );
+        // shared with the tui's chat screen; the command wrapper keeps the
+        // full attestation json on stdout.
+        const outcome = await runAttestNative(ctx, record, options.task, options.output, toolsUsed, options.idempotencyKey);
+        if (!isActionOutcomeOk(outcome)) {
+          const error = actionOutcomeToCliError(outcome);
+          if (error !== null) failSdkCode(error.code, error.message);
           return;
         }
-
-        // source is deliberately closed to "native": external records belong
-        // to `openrep ingest`, and the sdk rejects non-native here anyway.
-        const result = await attest(
-          {
-            agentId: record.publicKey,
-            task: options.task,
-            output: options.output,
-            toolsUsed,
-            source: "native",
-            idempotencyKey: options.idempotencyKey,
-          },
-          resolution.key,
-          ctx.storage,
-        );
-        if (!result.ok) {
-          failSdkError(result.error);
-          return;
-        }
-        console.log(JSON.stringify(result.value, null, 2));
+        console.log(JSON.stringify(outcome.value, null, 2));
       } catch (err) {
         if (handleCustodyError(err)) return;
         throw err;

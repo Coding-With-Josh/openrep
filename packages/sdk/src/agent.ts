@@ -457,6 +457,7 @@ export async function wrapAgent(
     params.config,
     params.tools,
     params.task,
+    { onToolCall: params.options?.onToolCall },
   );
   if (!loopResult.ok) {
     return loopResult; // TURN_LIMIT_EXCEEDED / RUN_TIMED_OUT / UNREGISTERED_TOOL / TOOL_ARGUMENT_INVALID / PROVIDER_API_FAILURE

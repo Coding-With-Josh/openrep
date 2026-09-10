@@ -36,6 +36,11 @@ export interface RunLoopOptions {
   // timeout path without waiting two minutes.
   maxRunMs?: number;
   maxTurns?: number;
+  // live progress hook invoked right after each tool executes, carrying the
+  // captured tool call (the exact object that later reaches attest()). a tui
+  // uses this to paint tool calls as they run; when absent the loop's
+  // behavior is byte-identical to before (no extra awaits, no extra calls).
+  onToolCall?: (toolCall: CapturedToolCall) => void;
 }
 
 export interface RunLoopResult {
@@ -154,6 +159,11 @@ export async function runAgentLoop(
         output,
       };
       toolsUsed.push(captured);
+
+      // live progress hook: a tui or other interactive surface can paint
+      // tool calls as they happen. when absent (the default), no call is
+      // made and the loop's timing is unchanged.
+      options.onToolCall?.(captured);
 
       // feed the tool result back. the assistant turn records what was
       // requested, the user turn carries the result in a labeled form so the

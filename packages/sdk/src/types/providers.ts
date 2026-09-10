@@ -112,6 +112,10 @@ export interface WrapAgentParams {
 export interface WrapAgentRunOptions {
   source?: string; // defaults to "native", matches attest()
   idempotencyKey?: string; // lets retries collapse into one attestation
+  // live progress hook: fired right after each tool executes, carrying the
+  // exact CapturedToolCall object the loop feeds attest(). when absent the
+  // loop's timing and behavior are unchanged.
+  onToolCall?: (toolCall: CapturedToolCall) => void;
 }
 
 // the normalized shape attest() expects for captured tool calls, carried

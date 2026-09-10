@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentIdentity } from "@openrep/sdk";
+import type { AgentIdentity } from "@openrepso/sdk";
 
 import type { CliEnv } from "../src/config.js";
 import { createCustody, type Custody } from "../src/custody/index.js";

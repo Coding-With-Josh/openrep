@@ -1,8 +1,8 @@
 import { Command } from "commander";
-import { createAgent } from "@openrepso/sdk";
 
 import type { CliContext } from "../context.js";
-import { failSdkError, handleCustodyError } from "./helpers.js";
+import { failSdkCode, handleCustodyError } from "./helpers.js";
+import { actionOutcomeToCliError, isActionOutcomeOk, runCreateAgent } from "./actions.js";
 import type { CreateCommandOptions } from "../types.js";
 
 export function createCommand(ctx: CliContext): Command {
@@ -12,16 +12,15 @@ export function createCommand(ctx: CliContext): Command {
     .option("--reveal-keys", "print the generated private keys to stdout. off by default so keys never reach scrollback, shell history, or ci logs")
     .action(async (name: string | undefined, options: CreateCommandOptions) => {
       try {
-        const result = await createAgent({ storage: ctx.storage, name });
-        if (!result.ok) {
-          failSdkError(result.error);
+        // shared with the tui's dashboard "create agent" flow; the command
+        // wrapper keeps the json stdout and the --reveal-keys filtering.
+        const outcome = await runCreateAgent(ctx, name);
+        if (!isActionOutcomeOk(outcome)) {
+          const error = actionOutcomeToCliError(outcome);
+          if (error !== null) failSdkCode(error.code, error.message);
           return;
         }
-        const identity = result.value;
-
-        // take custody of BOTH keys before printing anything: if no store
-        // accepts them, the whole create fails rather than half-succeeds.
-        await ctx.custody.storeAgentKeys(identity);
+        const identity = outcome.value;
 
         const publicInfo = {
           name: identity.name,

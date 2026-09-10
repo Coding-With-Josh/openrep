@@ -11,7 +11,7 @@ import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { attest, createAgent, createSqliteStorage, type AgentIdentity } from "@openrep/sdk";
+import { attest, createAgent, createSqliteStorage, type AgentIdentity } from "@openrepso/sdk";
 
 const BIN = fileURLToPath(new URL("../dist/bin.js", import.meta.url));
 
@@ -91,6 +91,21 @@ async function seedAgentAndAttestation(dbPath: string): Promise<{ identity: Agen
 }
 
 describe("spawned binary", () => {
+  it("bare openrep refuses the interactive tui on a non-tty and exits 0", async () => {
+    // the child's stdout is a pipe (not a tty), so the tui must be refused
+    // with a one-line stderr message and exit 0, which is also the historical
+    // bare-openrep exit code (help used to print and exit 0). the interactive
+    // tui itself is exercised by the renderToString smoke tests; full-keyboard
+    // flows need a pty harness and are intentionally not part of vitest.
+    const c = tempCtx();
+    const result = await runCli([], c.env);
+    expect(result.code).toBe(0);
+    expect(result.stderr).toContain("interactive session requires a terminal");
+    expect(result.stderr).toContain("openrep --help");
+    // the tui must not have rendered anything to a pipe.
+    expect(result.stdout).not.toContain("platform-agnostic reputation layer");
+  });
+
   it("create stores keys in a throwaway keychain; private keys print only with --reveal-keys", async (ctx) => {
     if (process.platform !== "darwin") ctx.skip(); // security is a macos tool
     const dir = mkdtempSync(join(tmpdir(), "openrep-e2e-kc-"));

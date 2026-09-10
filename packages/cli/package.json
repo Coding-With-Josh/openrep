@@ -14,7 +14,9 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
@@ -30,13 +32,17 @@
     "url": "https://github.com/Coding-With-Josh/openrep.git"
   },
   "dependencies": {
-    "@openrepso/sdk": "workspace:^",
     "@noble/ed25519": "^3.2.0",
-    "commander": "^13.1.0"
+    "@openrepso/sdk": "workspace:^",
+    "commander": "^13.1.0",
+    "ink": "^7.1.1",
+    "react": "19.2.8"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
     "@types/node": "^22.0.0",
+    "@types/react": "^19",
+    "@types/react-reconciler": "^0.33.0",
+    "typescript": "^5.7.0",
     "vitest": "^5.0.0"
   },
   "engines": {
