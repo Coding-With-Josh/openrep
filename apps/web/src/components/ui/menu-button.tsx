@@ -3,7 +3,7 @@
 import { useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Bot, Trophy, Moon, Shield, FileText, Sun } from "lucide-react";
+import { Home, Bot, Trophy, Moon, Shield, FileText, Sun, MessageCircle } from "lucide-react";
 import { useTheme } from "next-themes";
 import { MenuToggle } from "@/components/effects/menu-toggle";
 
@@ -27,6 +27,12 @@ const ITEMS: MenuItem[] = [
   { label: "privacy policy", href: "/privacy-policy", Icon: Shield },
   { label: "terms and conditions", href: "/terms-and-conditions", Icon: FileText },
   { label: "check me out", href: "https://x.com/josh_scriptz", Icon: XLogo, external: true },
+  {
+    label: "join whatsapp group",
+    href: "https://chat.whatsapp.com/BGIAEvn9xPJIfEHz0ddv9E",
+    Icon: MessageCircle,
+    external: true,
+  },
 ];
 
 export default function Menu({ className }: { className?: string }) {
