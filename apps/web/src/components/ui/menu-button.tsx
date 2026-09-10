@@ -1,14 +1,28 @@
 "use client";
 
-import { useEffect, useState, type ComponentType } from "react";
+import { Fragment, useEffect, useState, type ComponentType } from "react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "motion/react";
-import { Home, Bot, Trophy, Moon, Shield, FileText, Sun, MessageCircle } from "lucide-react";
+import {
+  Home,
+  Bot,
+  Trophy,
+  Moon,
+  Shield,
+  FileText,
+  Sun,
+  MessageCircle,
+} from "lucide-react";
 import { useTheme } from "next-themes";
 import { MenuToggle } from "@/components/effects/menu-toggle";
 
 const XLogo = ({ className }: { className?: string }) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" className={className} aria-hidden="true">
+  <svg
+    viewBox="0 0 24 24"
+    fill="currentColor"
+    className={className}
+    aria-hidden="true"
+  >
     <path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z" />
   </svg>
 );
@@ -18,17 +32,28 @@ type MenuItem = {
   href: string;
   Icon: ComponentType<{ className?: string }>;
   external?: boolean;
+  dividerAfter?: boolean;
 };
 
 const ITEMS: MenuItem[] = [
   { label: "home", href: "/", Icon: Home },
-  { label: "your agents", href: "/agents", Icon: Bot },
+  { label: "your agents", href: "/agents", Icon: Bot, dividerAfter: true },
   { label: "leaderboard", href: "/leaderboard", Icon: Trophy },
   { label: "privacy policy", href: "/privacy-policy", Icon: Shield },
-  { label: "terms and conditions", href: "/terms-and-conditions", Icon: FileText },
-  { label: "check me out", href: "https://x.com/josh_scriptz", Icon: XLogo, external: true },
   {
-    label: "join whatsapp group",
+    label: "terms and conditions",
+    href: "/terms-and-conditions",
+    Icon: FileText,
+    dividerAfter: true,
+  },
+  {
+    label: "check me out",
+    href: "https://x.com/josh_scriptz",
+    Icon: XLogo,
+    external: true,
+  },
+  {
+    label: "whatsapp group",
     href: "https://chat.whatsapp.com/BGIAEvn9xPJIfEHz0ddv9E",
     Icon: MessageCircle,
     external: true,
@@ -74,25 +99,22 @@ export default function Menu({ className }: { className?: string }) {
               exit={{ opacity: 0, scale: 0.95, y: 6 }}
               transition={{ duration: 0.18, ease: [0.16, 1, 0.3, 1] }}
             >
-              {ITEMS.map(({ label, href, Icon, external }) => {
+              {ITEMS.map(({ label, href, Icon, external, dividerAfter }) => {
                 const icon = <Icon className="w-4 h-4 shrink-0" />;
-                if (external) {
-                  return (
-                    <a
-                      key={label}
-                      href={href}
-                      target="_blank"
-                      rel="noreferrer"
-                      role="menuitem"
-                      className={itemClass}
-                      onClick={() => setOpen(false)}
-                    >
-                      {icon}
-                      {label}
-                    </a>
-                  );
-                }
-                return (
+                const item = external ? (
+                  <a
+                    key={label}
+                    href={href}
+                    target="_blank"
+                    rel="noreferrer"
+                    role="menuitem"
+                    className={itemClass}
+                    onClick={() => setOpen(false)}
+                  >
+                    {icon}
+                    {label}
+                  </a>
+                ) : (
                   <Link
                     key={label}
                     href={href}
@@ -103,6 +125,14 @@ export default function Menu({ className }: { className?: string }) {
                     {icon}
                     {label}
                   </Link>
+                );
+                return (
+                  <Fragment key={label}>
+                    {item}
+                    {dividerAfter && (
+                      <div className="border-t border-neutral-100 mx-1 my-1 dark:border-neutral-800" />
+                    )}
+                  </Fragment>
                 );
               })}
               <div className="border-t border-neutral-100 mx-1 my-1 dark:border-neutral-800" />
