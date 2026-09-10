@@ -4,8 +4,7 @@ import { ArrowRight, MessageCircle } from "lucide-react";
 import { getScore } from "@openrepso/sdk";
 import { createRequestContext } from "@/server/storage";
 import AgentAvatar from "@/components/ui/agent-avatar";
-import { BorderBeamButton } from "@/components/effects/border-beam";
-import { useTheme } from "next-themes";
+import { ThemeAwareBorderBeamButton } from "@/components/ui/theme-aware-border-beam-button";
 
 export const dynamic = "force-dynamic";
 
@@ -161,14 +160,13 @@ export default async function LeaderboardPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
-                    <BorderBeamButton
+                    <ThemeAwareBorderBeamButton
                       beamSize="pulse-inner"
-                      theme="auto"
                       className="rounded-full text-md font-mono tracking-tight font-medium text-neutral-700 bg-white hover:bg-neutral-50 dark:bg-neutral-800 dark:hover:bg-neutral-700 dark:text-neutral-200"
                     >
                       <span className="size-2 rounded-full bg-emerald-500"></span>
                       {row.composite.toFixed(2)}
-                    </BorderBeamButton>
+                    </ThemeAwareBorderBeamButton>
                     <ArrowRight className="w-4 h-4 text-neutral-300 group-hover:text-neutral-500 group-hover:translate-x-1 transition-all duration-200 dark:text-neutral-600 dark:group-hover:text-neutral-400" />
                   </div>
                 </Link>
