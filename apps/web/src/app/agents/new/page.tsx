@@ -1,18 +1,18 @@
-'use client'
+"use client";
 
-import { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { ArrowLeft, Globe, Loader2, Lock, Plus, RefreshCw } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import AgentAvatar from '@/components/ui/agent-avatar';
-import { useGuestSession } from '@/lib/session';
-import { invalidateCachePrefix } from '@/lib/client-cache';
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft, Globe, Loader2, Lock, Plus, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import AgentAvatar from "@/components/ui/agent-avatar";
+import { useGuestSession } from "@/lib/session";
+import { invalidateCachePrefix } from "@/lib/client-cache";
 
 import { generateNameBatch } from "@openrepso/sdk/names";
 
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-type Visibility = 'public' | 'private';
+type Visibility = "public" | "private";
 
 // candidates come from the sdk name module: every reroll draws a fresh
 // shuffled batch with no repeated word or name, so the cycle never offers
@@ -25,12 +25,14 @@ type ApiError = { error?: { code?: string; message?: string } };
 const Page = () => {
   const router = useRouter();
   const { ready: sessionReady, error: sessionError } = useGuestSession();
-  const [candidates, setCandidates] = useState<string[]>(() => generateNameBatch(NAME_BATCH_SIZE));
+  const [candidates, setCandidates] = useState<string[]>(() =>
+    generateNameBatch(NAME_BATCH_SIZE),
+  );
   const [name, setName] = useState(() => toInputValue(candidates[0]));
   const [candidateIndex, setCandidateIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [visibility, setVisibility] = useState<Visibility>('public');
+  const [visibility, setVisibility] = useState<Visibility>("public");
 
   const handleReroll = () => {
     if (creating) return;
@@ -52,12 +54,14 @@ const Page = () => {
     if (creating) return;
     setError(null);
     if (!sessionReady) {
-      setError(sessionError ?? 'session is not ready yet, try again');
+      setError(sessionError ?? "session is not ready yet, try again");
       return;
     }
     const trimmed = name.trim().toLowerCase();
     if (trimmed.length > 0 && !NAME_RE.test(trimmed)) {
-      setError('name must be lowercase letters, digits and hyphens, e.g. lucky-cat-gold');
+      setError(
+        "name must be lowercase letters, digits and hyphens, e.g. lucky-cat-gold",
+      );
       return;
     }
     setCreating(true);
@@ -67,29 +71,35 @@ const Page = () => {
       // server-side contract, appended here so a typed name actually saves.
       // visibility is the closed set {public, private}; anything else is
       // rejected by the api route before the sdk runs.
-      const res = await fetch('/api/agents', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...(trimmed.length > 0 ? { name: `${trimmed}.agent` } : {}), visibility }),
+      const res = await fetch("/api/agents", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(trimmed.length > 0 ? { name: `${trimmed}.agent` } : {}),
+          visibility,
+        }),
       });
       const body: AgentManifest | ApiError = await res.json();
       if (!res.ok) {
-        setError((body as ApiError).error?.message ?? 'could not create the agent, try again');
+        setError(
+          (body as ApiError).error?.message ??
+            "could not create the agent, try again",
+        );
         return;
       }
       const created = body as AgentManifest;
       // the agent list page still holds a pre-create cached copy; drop it so
       // navigating back refetches and shows the new agent immediately.
-      invalidateCachePrefix('agents:');
+      invalidateCachePrefix("agents:");
       // pass the created display name straight to the next route so the
       // header and avatar render instantly instead of waiting on a fetch.
       router.push(
-        `/agents/${encodeURIComponent(created.publicKey)}?name=${encodeURIComponent(
-          created.name.replace(/\.agent$/, ''),
-        )}`,
+        `/agents/${encodeURIComponent(
+          created.publicKey,
+        )}?name=${encodeURIComponent(created.name.replace(/\.agent$/, ""))}`,
       );
     } catch {
-      setError('could not reach the server, check your connection');
+      setError("could not reach the server, check your connection");
     } finally {
       setCreating(false);
     }
@@ -127,7 +137,9 @@ const Page = () => {
                   <input
                     value={name}
                     onChange={(e) => {
-                      setName(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''));
+                      setName(
+                        e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""),
+                      );
                       setError(null);
                     }}
                     disabled={creating}
@@ -145,10 +157,10 @@ const Page = () => {
                   disabled={creating}
                   aria-label="Reroll name"
                   className={cn(
-                    'p-2 rounded-full text-neutral-500 transition-all duration-200 dark:text-neutral-400',
+                    "p-2 rounded-full text-neutral-500 transition-all duration-200 dark:text-neutral-400",
                     creating
-                      ? 'opacity-40 cursor-not-allowed'
-                      : 'hover:bg-neutral-100 hover:text-neutral-700 hover:scale-102 active:scale-98 dark:hover:bg-white/10 dark:hover:text-neutral-200'
+                      ? "opacity-40 cursor-not-allowed"
+                      : "hover:bg-neutral-100 hover:text-neutral-700 hover:scale-102 active:scale-98 dark:hover:bg-white/10 dark:hover:text-neutral-200",
                   )}
                 >
                   <RefreshCw className="w-4 h-4" />
@@ -159,17 +171,17 @@ const Page = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setVisibility('public');
+                    setVisibility("public");
                     setError(null);
                   }}
                   disabled={creating}
-                  aria-pressed={visibility === 'public'}
+                  aria-pressed={visibility === "public"}
                   className={cn(
-                    'flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tracking-tight transition-all duration-200',
-                    visibility === 'public'
-                      ? 'bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/10'
-                      : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
-                    creating && 'opacity-60 cursor-not-allowed',
+                    "flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tracking-tight transition-all duration-200",
+                    visibility === "public"
+                      ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/10"
+                      : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200",
+                    creating && "opacity-60 cursor-not-allowed",
                   )}
                 >
                   <Globe className="w-3.5 h-3.5" />
@@ -178,17 +190,17 @@ const Page = () => {
                 <button
                   type="button"
                   onClick={() => {
-                    setVisibility('private');
+                    setVisibility("private");
                     setError(null);
                   }}
                   disabled={creating}
-                  aria-pressed={visibility === 'private'}
+                  aria-pressed={visibility === "private"}
                   className={cn(
-                    'flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tracking-tight transition-all duration-200',
-                    visibility === 'private'
-                      ? 'bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/10'
-                      : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
-                    creating && 'opacity-60 cursor-not-allowed',
+                    "flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tracking-tight transition-all duration-200",
+                    visibility === "private"
+                      ? "bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/10"
+                      : "text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200",
+                    creating && "opacity-60 cursor-not-allowed",
                   )}
                 >
                   <Lock className="w-3.5 h-3.5" />
@@ -200,17 +212,25 @@ const Page = () => {
                 <span className="font-mono text-sm font-medium tracking-tight text-neutral-700 dark:text-neutral-200">
                   score 0.00
                 </span>
-                <span className="text-xs text-neutral-400">no attestations yet</span>
+                <span className="text-xs text-neutral-400">
+                  no attestations yet
+                </span>
               </div>
 
-              {error && <p className="text-xs text-rose-600 font-medium dark:text-rose-400">{error}</p>}
+              {error && (
+                <p className="text-xs text-rose-600 font-medium dark:text-rose-400">
+                  {error}
+                </p>
+              )}
 
               <button
                 type="submit"
                 disabled={creating}
                 className={cn(
-                  'w-full flex items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-2.5 text-sm font-medium tracking-tight text-white transition-all duration-200 dark:bg-white dark:text-black',
-                  creating ? 'opacity-60 cursor-not-allowed' : 'hover:scale-102 active:scale-98'
+                  "w-full flex items-center justify-center gap-2 rounded-full bg-neutral-900 px-4 py-2.5 text-sm font-medium tracking-tight text-white transition-all duration-200 dark:bg-white dark:text-black",
+                  creating
+                    ? "opacity-60 cursor-not-allowed"
+                    : "hover:scale-102 active:scale-98",
                 )}
               >
                 {creating ? (

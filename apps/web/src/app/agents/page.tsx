@@ -1,6 +1,14 @@
 "use client";
 
-import { Globe, Lock, Plus, ArrowRight, Check, CloudUpload, Loader2 } from "lucide-react";
+import {
+  Globe,
+  Lock,
+  Plus,
+  ArrowRight,
+  Check,
+  CloudUpload,
+  Loader2,
+} from "lucide-react";
 import Link from "next/link";
 import React, { useState } from "react";
 import { useSession } from "next-auth/react";
@@ -10,7 +18,11 @@ import { BorderBeamButton } from "@/components/ui/border-beam-button";
 import { SignInModal } from "@/components/auth/sign-in-modal";
 import AgentAvatar from "@/components/ui/agent-avatar";
 import { useGuestSession } from "@/lib/session";
-import { cachedFetch, invalidateCachePrefix, useCachedData } from "@/lib/client-cache";
+import {
+  cachedFetch,
+  invalidateCachePrefix,
+  useCachedData,
+} from "@/lib/client-cache";
 import { useTheme } from "next-themes";
 
 type AgentScore = {
@@ -70,7 +82,8 @@ const Page = () => {
   // clicks while the PATCH is pending.
   const [togglingId, setTogglingId] = useState<string | null>(null);
 
-  const isSignedIn = !signedOut && (status === "authenticated" || localEmail !== null);
+  const isSignedIn =
+    !signedOut && (status === "authenticated" || localEmail !== null);
   // the signedOut flag also gates the email shown in the account modal, so a
   // sign-out never leaves the signed-in branch visible while next-auth state
   // is still catching up.
@@ -82,14 +95,17 @@ const Page = () => {
   // previous identity's cached rows become unreachable, so the list refetches
   // instead of re-painting them. while the account id is not yet known the
   // key is null, which skips the fetch rather than guessing an identity.
-  const signedIn = !signedOut && (status === "authenticated" || localEmail !== null);
+  const signedIn =
+    !signedOut && (status === "authenticated" || localEmail !== null);
   const effectiveUserId = signedIn
     ? session?.user?.id && session.user.id.length > 0
       ? session.user.id
       : null
     : guest?.userId ?? null;
   const cacheKey =
-    sessionReady && effectiveUserId !== null ? `agents:${effectiveUserId}` : null;
+    sessionReady && effectiveUserId !== null
+      ? `agents:${effectiveUserId}`
+      : null;
   const {
     data: agents,
     error: loadError,
@@ -111,15 +127,23 @@ const Page = () => {
     invalidateCachePrefix("agents:");
   };
 
-  async function handleVisibilityToggle(agentId: string, current: "public" | "private"): Promise<void> {
+  async function handleVisibilityToggle(
+    agentId: string,
+    current: "public" | "private",
+  ): Promise<void> {
     if (togglingId !== null) return;
     setTogglingId(agentId);
     try {
-      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/visibility`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ visibility: current === "public" ? "private" : "public" }),
-      });
+      const res = await fetch(
+        `/api/agents/${encodeURIComponent(agentId)}/visibility`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visibility: current === "public" ? "private" : "public",
+          }),
+        },
+      );
       // an ok response means the toggle persisted; re-fetch so the row's
       // visibility pill reflects the authoritative value.
       if (res.ok) await reload();

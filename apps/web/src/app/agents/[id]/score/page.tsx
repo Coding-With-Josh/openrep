@@ -15,7 +15,12 @@ type ToolCall = { tool: string; input?: unknown; output?: unknown };
 type AgentScore = {
   agentId: string;
   composite: number;
-  breakdown: { source: string; value: number; count: number; lastUpdated: string }[];
+  breakdown: {
+    source: string;
+    value: number;
+    count: number;
+    lastUpdated: string;
+  }[];
   computedAt: string;
 };
 type AgentManifest = {
@@ -46,7 +51,10 @@ type ScoreBody = {
   manifestVerdict: { valid: boolean; reason: string };
   score: AgentScore;
   isOwner: boolean;
-  attestations: { attestation: Attestation; verdict: { valid: boolean; reason: string } }[];
+  attestations: {
+    attestation: Attestation;
+    verdict: { valid: boolean; reason: string };
+  }[];
   verifiedCount: number;
   totalCount: number;
 };
@@ -66,16 +74,16 @@ const Page = () => {
 
   // the score card is keyed by the server-confirmed session userId so a
   // reload paints the cached copy instantly and revalidates in the background.
-  const cacheKey = sessionReady && guest !== null && id !== undefined
-    ? `scorecard:${guest.userId}:${id}`
-    : null;
+  const cacheKey =
+    sessionReady && guest !== null && id !== undefined
+      ? `scorecard:${guest.userId}:${id}`
+      : null;
   const {
     data: body,
     error: loadError,
     reload,
-  } = useCachedData<ScoreBody>(
-    cacheKey,
-    () => cachedFetch<ScoreBody>(`/api/agents/${encodeURIComponent(id ?? "")}/score`),
+  } = useCachedData<ScoreBody>(cacheKey, () =>
+    cachedFetch<ScoreBody>(`/api/agents/${encodeURIComponent(id ?? "")}/score`),
   );
 
   const manifest = body?.manifest ?? null;
@@ -97,7 +105,9 @@ const Page = () => {
   const backHref =
     fromLeaderboard || isOwner === false
       ? "/leaderboard"
-      : `/agents/${encodeURIComponent(id ?? "")}?name=${encodeURIComponent(name)}`;
+      : `/agents/${encodeURIComponent(id ?? "")}?name=${encodeURIComponent(
+          name,
+        )}`;
   const composite = score?.composite ?? 0;
   const maxBreakdown = Math.max(
     1,
@@ -117,14 +127,22 @@ const Page = () => {
 
           <div className="flex-1 flex items-center gap-3 min-w-0">
             <div className="size-10 rounded-lg bg-linear-to-br from-neutral-100 to-neutral-200 overflow-hidden dark:from-neutral-800 dark:to-neutral-700">
-              <AgentAvatar name={name} seed={id ?? undefined} className="w-full h-full" />
+              <AgentAvatar
+                name={name}
+                seed={id ?? undefined}
+                className="w-full h-full"
+              />
             </div>
             <div className="flex flex-col items-start gap-0.5 min-w-0">
               <h1 className="text-sm font-medium tracking-tight text-neutral-900 truncate dark:text-neutral-50">
                 {name}
               </h1>
               <div className="flex items-center gap-1.5 text-xs text-neutral-400 dark:text-neutral-500">
-                <CopyButton value={id ?? ""} label="Copy agent id" className="text-xs">
+                <CopyButton
+                  value={id ?? ""}
+                  label="Copy agent id"
+                  className="text-xs"
+                >
                   <span className="font-mono">{shortId(id ?? "")}</span>
                 </CopyButton>
               </div>
@@ -132,7 +150,9 @@ const Page = () => {
           </div>
 
           <Link
-            href={`/agents/${encodeURIComponent(id ?? "")}/score?name=${encodeURIComponent(name)}`}
+            href={`/agents/${encodeURIComponent(
+              id ?? "",
+            )}/score?name=${encodeURIComponent(name)}`}
             className="ml-auto shrink-0"
           >
             <BorderBeamButton
@@ -156,7 +176,9 @@ const Page = () => {
         {loadError && body === null ? (
           <main className="bg-neutral-100/70 p-2 rounded-2xl shadow-sm ring-1 ring-neutral-200/50 dark:bg-neutral-900/70 dark:ring-neutral-800/50">
             <div className="bg-white rounded-xl p-6 text-center border border-neutral-100 dark:bg-neutral-900 dark:border-neutral-800">
-              <p className="text-sm text-rose-600 font-medium dark:text-rose-400">{loadError}</p>
+              <p className="text-sm text-rose-600 font-medium dark:text-rose-400">
+                {loadError}
+              </p>
               <button
                 onClick={reload}
                 className="mt-3 text-xs font-medium text-neutral-600 hover:text-neutral-900 transition-colors dark:text-neutral-400 dark:hover:text-neutral-50"
@@ -165,7 +187,10 @@ const Page = () => {
               </button>
             </div>
           </main>
-        ) : body === null || manifest === null || score === null || attestations === null ? (
+        ) : body === null ||
+          manifest === null ||
+          score === null ||
+          attestations === null ? (
           <main className="bg-neutral-100/70 p-2 rounded-2xl shadow-sm ring-1 ring-neutral-200/50 dark:bg-neutral-900/70 dark:ring-neutral-800/50">
             <div className="bg-white rounded-xl p-6 border border-neutral-100 flex items-center justify-center gap-2.5 text-sm text-neutral-500 dark:bg-neutral-900 dark:border-neutral-800 dark:text-neutral-400">
               <ThinkingOrb state="searching" size={20} />
@@ -186,7 +211,9 @@ const Page = () => {
               <div className="flex flex-col items-start gap-1 sm:items-end">
                 <div
                   className={`flex items-center gap-1.5 text-xs font-medium ${
-                    manifestValid ? "text-emerald-700 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"
+                    manifestValid
+                      ? "text-emerald-700 dark:text-emerald-400"
+                      : "text-rose-600 dark:text-rose-400"
                   }`}
                 >
                   <BadgeCheck className="w-4 h-4" />
@@ -199,7 +226,9 @@ const Page = () => {
                   label="Copy verify command"
                   className="text-[10px]"
                 >
-                  <span className="font-mono dark:text-neutral-400">openrep verify --agent {shortId(id ?? "")}</span>
+                  <span className="font-mono dark:text-neutral-400">
+                    openrep verify --agent {shortId(id ?? "")}
+                  </span>
                 </CopyButton>
               </div>
             </div>
@@ -211,17 +240,22 @@ const Page = () => {
                 </h2>
                 {score.computedAt && (
                   <p className="font-mono text-[10px] text-neutral-400 dark:text-neutral-500">
-                    computed {score.computedAt.slice(0, 10)} {score.computedAt.slice(11, 19)}
+                    computed {score.computedAt.slice(0, 10)}{" "}
+                    {score.computedAt.slice(11, 19)}
                   </p>
                 )}
               </div>
               {score.breakdown.length === 0 ? (
-                <p className="text-sm text-neutral-400 dark:text-neutral-500">no attestations yet</p>
+                <p className="text-sm text-neutral-400 dark:text-neutral-500">
+                  no attestations yet
+                </p>
               ) : (
                 score.breakdown.map((row) => (
                   <div key={row.source} className="flex flex-col gap-1.5">
                     <div className="flex items-baseline justify-between">
-                      <span className="text-sm text-neutral-700 dark:text-neutral-300">{row.source}</span>
+                      <span className="text-sm text-neutral-700 dark:text-neutral-300">
+                        {row.source}
+                      </span>
                       <div className="flex items-baseline gap-3">
                         <span className="font-mono text-sm text-neutral-900 dark:text-neutral-50">
                           {row.value.toFixed(2)}
@@ -235,7 +269,10 @@ const Page = () => {
                       <div
                         className="h-full rounded-full bg-neutral-900 transition-all duration-200 dark:bg-neutral-100"
                         style={{
-                          width: `${Math.min(100, (row.value / maxBreakdown) * 100)}%`,
+                          width: `${Math.min(
+                            100,
+                            (row.value / maxBreakdown) * 100,
+                          )}%`,
                         }}
                       ></div>
                     </div>
@@ -255,8 +292,8 @@ const Page = () => {
               </div>
               {!isOwner ? (
                 <p className="text-sm text-neutral-500 py-3 text-center dark:text-neutral-400">
-                  {totalCount} attestation{totalCount === 1 ? "" : "s"} · {verifiedCount}{" "}
-                  verified · contents are private to the owner
+                  {totalCount} attestation{totalCount === 1 ? "" : "s"} ·{" "}
+                  {verifiedCount} verified · contents are private to the owner
                 </p>
               ) : attestations === null || attestations.length === 0 ? (
                 <p className="text-sm text-neutral-400 py-3 text-center dark:text-neutral-500">
@@ -266,7 +303,11 @@ const Page = () => {
                 attestations.map(({ attestation, verdict }, idx) => (
                   <div
                     key={attestation.id}
-                    className={`flex items-start gap-3 px-1 py-3 ${idx > 0 ? "border-t border-neutral-100 dark:border-neutral-800" : ""}`}
+                    className={`flex items-start gap-3 px-1 py-3 ${
+                      idx > 0
+                        ? "border-t border-neutral-100 dark:border-neutral-800"
+                        : ""
+                    }`}
                   >
                     <div className="flex flex-col items-center gap-1 pt-0.5">
                       {verdict.valid ? (

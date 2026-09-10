@@ -105,7 +105,7 @@ export default function Menu({ className }: { className?: string }) {
                   <a
                     key={label}
                     href={href}
-                    target="_blank"
+                    target="_blank" 
                     rel="noreferrer"
                     role="menuitem"
                     className={itemClass}

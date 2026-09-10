@@ -118,7 +118,7 @@ export default function ChatInterface() {
   const params = useParams<{ id: string }>();
   const id = params.id;
   const searchParams = useSearchParams();
-  const { theme } = useTheme()
+  const { theme } = useTheme();
   const queryName = searchParams.get("name");
   const { ready: sessionReady, session: guest } = useGuestSession();
 
@@ -450,7 +450,8 @@ export default function ChatInterface() {
                       say hello to get started
                     </p>
                     <p className="text-xs text-neutral-500 mt-1 dark:text-neutral-400">
-                      your first message becomes this agent&apos;s first attestation
+                      your first message becomes this agent&apos;s first
+                      attestation
                     </p>
                   </div>
                 )

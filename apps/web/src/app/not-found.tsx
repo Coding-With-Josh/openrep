@@ -6,7 +6,12 @@ export default function NotFound() {
   return (
     <div className="bg-white text-black w-screen min-h-screen flex items-center justify-center">
       <div className="flex flex-col items-center justify-center gap-3 z-1">
-        <PixelHeading as="span" initialFont="square" hoverFont="line" className="text-9xl">
+        <PixelHeading
+          as="span"
+          initialFont="square"
+          hoverFont="line"
+          className="text-9xl"
+        >
           404
         </PixelHeading>
         <h1 className="text-xl tracking-[-0.02em] font-sans">
