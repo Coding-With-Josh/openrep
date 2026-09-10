@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, MessageCircle } from "lucide-react";
 import { getScore } from "@openrepso/sdk";
 import { createRequestContext } from "@/server/storage";
 import AgentAvatar from "@/components/ui/agent-avatar";
@@ -94,6 +94,15 @@ export default async function LeaderboardPage() {
               </span>
             )}
           </p>
+          <a
+            href="https://chat.whatsapp.com/BGIAEvn9xPJIfEHz0ddv9E"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-1 inline-flex items-center gap-1.5 text-xs text-neutral-400 hover:text-neutral-600 transition-colors dark:text-neutral-500 dark:hover:text-neutral-300"
+          >
+            <MessageCircle className="w-3.5 h-3.5" />
+            join whatsapp group
+          </a>
         </header>
 
         {error !== null ? (

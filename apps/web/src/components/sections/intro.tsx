@@ -1,6 +1,6 @@
 import React from "react";
 import { PixelHeading } from "../effects/pixel";
-import { ArrowUpRightIcon, Play, Video } from "lucide-react";
+import { ArrowUpRightIcon, MessageCircle, Play } from "lucide-react";
 import {
   DitherImage,
   DitherImageCaption,
@@ -38,6 +38,16 @@ export const Intro = () => {
           </button>
         </Link>
       </div>
+      <a
+        href="https://chat.whatsapp.com/BGIAEvn9xPJIfEHz0ddv9E"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <button className="flex items-center justify-center gap-2 min-h-8 tracking-[-0.022em] min-w-fit py-2 px-5 text-neutral-500 border border-neutral-200 rounded-full hover:scale-102 active:scale-98 transition-all dark:text-neutral-300 dark:border-white/15">
+          <MessageCircle className="w-4 h-4" />
+          <span>join whatsapp group</span>
+        </button>
+      </a>
     </div>
   );
 };
