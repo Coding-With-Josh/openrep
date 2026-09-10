@@ -111,7 +111,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         if (!scoreResult.ok) return errorResponse(scoreResult.error);
         const row = await context.storage.getSessionKey(record.publicKey, session.userId);
         const sessionStatus = row !== null && row.expiresAtEpochMs > Date.now() ? "active" : "expired";
-        items.push({ manifest: publicManifest(record), score: scoreResult.value, sessionStatus });
+        items.push({ manifest: publicManifest(record), visibility: record.visibility, score: scoreResult.value, sessionStatus });
       }
       return jsonResponse(items, 200);
     } finally {

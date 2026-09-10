@@ -1,6 +1,6 @@
 "use client";
 
-import { Lock, Plus, ArrowRight, Check, CloudUpload } from "lucide-react";
+import { Globe, Lock, Plus, ArrowRight, Check, CloudUpload, Loader2 } from "lucide-react";
 import Link from "next/link";
 import React, { useState } from "react";
 import { useSession } from "next-auth/react";
@@ -38,6 +38,7 @@ type AgentManifest = {
 
 type AgentRow = {
   manifest: AgentManifest;
+  visibility: "public" | "private";
   score: AgentScore;
   sessionStatus: "active" | "expired";
 };
@@ -65,6 +66,9 @@ const Page = () => {
   // client state settles, so the identity key flips on this very render and
   // the stale list is dropped instead of lingering until the session refetch.
   const [signedOut, setSignedOut] = useState(false);
+  // id of the agent whose visibility toggle is in-flight; prevents double
+  // clicks while the PATCH is pending.
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const isSignedIn = !signedOut && (status === "authenticated" || localEmail !== null);
   // the signedOut flag also gates the email shown in the account modal, so a
@@ -106,6 +110,23 @@ const Page = () => {
     // the server, never from a cache the previous identity wrote.
     invalidateCachePrefix("agents:");
   };
+
+  async function handleVisibilityToggle(agentId: string, current: "public" | "private"): Promise<void> {
+    if (togglingId !== null) return;
+    setTogglingId(agentId);
+    try {
+      const res = await fetch(`/api/agents/${encodeURIComponent(agentId)}/visibility`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ visibility: current === "public" ? "private" : "public" }),
+      });
+      // an ok response means the toggle persisted; re-fetch so the row's
+      // visibility pill reflects the authoritative value.
+      if (res.ok) await reload();
+    } finally {
+      setTogglingId(null);
+    }
+  }
 
   return (
     <div className="bg-white text-black min-h-screen flex flex-col items-center justify-center px-6 py-10 relative overflow-hidden dark:bg-neutral-950 dark:text-neutral-100">
@@ -234,6 +255,26 @@ const Page = () => {
                             <Lock className="w-2.5 h-2.5" strokeWidth={3} />
                             expired
                           </span>
+                        )}
+                        {togglingId === id ? (
+                          <Loader2 className="ml-1 w-2.5 h-2.5 animate-spin text-neutral-400" />
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              handleVisibilityToggle(id, row.visibility);
+                            }}
+                            className="ml-1.5 inline-flex items-center gap-0.5 bg-neutral-100 hover:bg-neutral-200 px-1.5 py-0.5 rounded-full text-[10px] font-medium text-neutral-500 transition-colors dark:bg-white/10 dark:hover:bg-white/15 dark:text-neutral-400"
+                          >
+                            {row.visibility === "private" ? (
+                              <Lock className="w-2.5 h-2.5" strokeWidth={3} />
+                            ) : (
+                              <Globe className="w-2.5 h-2.5" strokeWidth={3} />
+                            )}
+                            {row.visibility}
+                          </button>
                         )}
                       </div>
                     </div>

@@ -19,7 +19,20 @@ export async function GET(
       if (record === null) {
         return errorResponse(codedError("AGENT_NOT_FOUND", `no agent with id ${id}`));
       }
+      // the principal (the authenticated session) is resolved once up front
+      // and reused for BOTH gates below, so the check and the use run in the
+      // same mediation pass. this is the complete-mediation seam: a private
+      // agent is indistinguishable from a nonexistent one to a non-owner.
       const isOwner = (await context.storage.getSessionKey(id, session.userId)) !== null;
+
+      // a PRIVATE agent's detail/score view is authorizable only to its
+      // owner. anyone else gets the same AGENT_NOT_FOUND a missing agent
+      // returns, so a private agent's existence stays unobservable to
+      // non-owners (the leaderboard never reveals it, and this route does
+      // not leak it either). no attestations, manifest, or score ever leave.
+      if (record.visibility === "private" && !isOwner) {
+        return errorResponse(codedError("AGENT_NOT_FOUND", `no agent with id ${id}`));
+      }
 
       const manifest: AgentManifest = {
         name: record.name,
