@@ -115,11 +115,11 @@ export function Dashboard(props: DashboardProps) {
       </Box>
 
       {rows.length === 0 ? (
-        <Box marginTop={1}>
+        <Box borderStyle="round" marginTop={1} padding={1}>
           <Text dimColor>no agents yet. press n to create one.</Text>
         </Box>
       ) : (
-        <Box flexDirection="column" marginTop={1}>
+        <Box borderStyle="round" flexDirection="column" marginTop={1} padding={1}>
           {rows.map((row, index) => {
             const isSelected = index === selected;
             const previous = props.lastScores[row.record.publicKey];
@@ -149,13 +149,13 @@ export function Dashboard(props: DashboardProps) {
       )}
 
       {confirmIndex !== null ? (
-        <Box marginTop={1}>
+        <Box borderStyle="round" marginTop={1} padding={1}>
           <Text color="yellow">revoke {rows[confirmIndex]?.record.name}? [y]es [n]o</Text>
         </Box>
       ) : (
-<Box marginTop={1}>
-        <Text dimColor>[n] new agent   [enter] chat   [s] score   [r] revoke   [q] quit   ↑/↓ select</Text>
-      </Box>
+        <Box marginTop={1}>
+          <Text dimColor>[n] new agent   [enter] chat   [s] score   [r] revoke   [q] quit   ↑/↓ select</Text>
+        </Box>
       )}
 
       {error !== null ? <ErrorLine error={error} /> : null}

@@ -48,15 +48,17 @@ export function Splash({ storageName, modelLabel, model, sessionId, helpOpen, on
   if (helpOpen) {
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold>help</Text>
-        <Box flexDirection="column" marginTop={1}>
-          <Text>any key    open your agents</Text>
-          <Text>ctrl+n     new agent (create flow)</Text>
-          <Text>?          toggle this help</Text>
-          <Text>ctrl+c     exit</Text>
-        </Box>
-        <Box marginTop={1}>
-          <Text dimColor>press any key to continue</Text>
+        <Box borderStyle="round" flexDirection="column" padding={1} marginBottom={1}>
+          <Text bold>help</Text>
+          <Box flexDirection="column" marginTop={1}>
+            <Text>any key    open your agents</Text>
+            <Text>ctrl+n     new agent (create flow)</Text>
+            <Text>?          toggle this help</Text>
+            <Text>ctrl+c     exit</Text>
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>press any key to continue</Text>
+          </Box>
         </Box>
         {error !== null ? <ErrorLine error={error} /> : null}
       </Box>
@@ -65,30 +67,32 @@ export function Splash({ storageName, modelLabel, model, sessionId, helpOpen, on
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Box flexDirection="column">
-        {LOGO.map((line) => (
-          <Text key={line} color="cyan">
-            {line}
-          </Text>
-        ))}
-      </Box>
-      <Box marginTop={1}>
-        <Text dimColor>platform-agnostic reputation layer for ai agents</Text>
-      </Box>
+      <Box borderStyle="round" flexDirection="column" padding={1}>
+        <Box flexDirection="column">
+          {LOGO.map((line) => (
+            <Text key={line} color="cyan">
+              {line}
+            </Text>
+          ))}
+        </Box>
+        <Box marginTop={1}>
+          <Text dimColor>platform-agnostic reputation layer for ai agents</Text>
+        </Box>
 
-      <Box flexDirection="column" marginTop={1}>
-        <Text>
-          <Text color="green">● </Text>
-          <Text>{storageDotLine(storageName)}</Text>
-        </Text>
-        <Text>
-          <Text color="cyan">● </Text>
-          <Text>{splashModelLine(modelLabel, model)}</Text>
-        </Text>
-        <Text>
-          <Text color="yellow">● </Text>
-          <Text>session {sessionId} (guest)</Text>
-        </Text>
+        <Box flexDirection="column" marginTop={1}>
+          <Text>
+            <Text color="green">● </Text>
+            <Text>{storageDotLine(storageName)}</Text>
+          </Text>
+          <Text>
+            <Text color="cyan">● </Text>
+            <Text>{splashModelLine(modelLabel, model)}</Text>
+          </Text>
+          <Text>
+            <Text color="yellow">● </Text>
+            <Text>session {sessionId} (guest)</Text>
+          </Text>
+        </Box>
       </Box>
 
       <Box marginTop={1}>

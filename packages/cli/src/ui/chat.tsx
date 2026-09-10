@@ -13,6 +13,7 @@ import { Box, Text, useInput } from "ink";
 
 import { formatScore, scoreDeltaString, shortPubKey, toolCallSummary } from "./format.js";
 import { PromptInput } from "./prompt.js";
+import { renderMarkdownToAnsi } from "./markdown.js";
 import type { UiChatEntry, UiError, UiAgentRow } from "./types.js";
 import { ErrorLine } from "./splash.js";
 
@@ -37,7 +38,7 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
   const [draft, setDraft] = useState("");
   const [keyDraft, setKeyDraft] = useState("");
 
-  useInput((_input, key) => {
+  useInput((input, key) => {
     // esc always leaves the chat screen, even mid-turn: a running turn is
     // anchored to this agent's state and completing it is safe (attest
     // dedupes via idempotency key), so navigation is permitted. while the
@@ -52,8 +53,12 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
       return;
     }
     // ctrl+r retries the last user message. meaningful only when there is a
-    // user turn and nothing is already running.
-    if (key.ctrl && key.return === false && key.escape === false && !keyPromptActive && !sending) {
+    // user turn and nothing is already running. the chord is checked
+    // explicitly: ink reports ctrl+r as the DC2 control char with key.ctrl
+    // set, so matching just input === "r" would miss it, and matching every
+    // ctrl chord would hijack the ctrl+u/ctrl+k line kills that the focused
+    // prompt now implements.
+    if (key.ctrl && (input === "r" || input === "\u0012") && !keyPromptActive && !sending) {
       onRetry();
       return;
     }
@@ -84,7 +89,7 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
         </Box>
       ) : null}
 
-      <Box flexDirection="column" marginTop={1}>
+      <Box borderStyle="round" flexDirection="column" marginTop={1} padding={1}>
         {entries.length === 0 ? (
           <Text dimColor>no messages yet. ask the agent something.</Text>
         ) : (
@@ -95,7 +100,7 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
       </Box>
 
       {keyPromptActive ? (
-        <Box flexDirection="column" marginTop={1}>
+        <Box borderStyle="round" flexDirection="column" marginTop={1} padding={1}>
           <Box>
             <Text color="yellow">no provider api key on file. paste one to save and send:</Text>
           </Box>
@@ -117,7 +122,7 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
           </Box>
         </Box>
       ) : (
-        <Box marginTop={1}>
+        <Box borderStyle="round" marginTop={1} paddingX={1}>
           <PromptInput
             value={draft}
             onChange={setDraft}
@@ -165,7 +170,7 @@ function MessageEntry({ entry }: { entry: UiChatEntry }) {
 
   return (
     <Box flexDirection="column">
-      <Text>{entry.content}</Text>
+      <Text>{renderMarkdownToAnsi(entry.content)}</Text>
       {entry.toolsUsed.length > 0 ? (
         <Box paddingLeft={2} flexDirection="column">
           {entry.toolsUsed.map((tool, i) => (
@@ -190,7 +195,7 @@ function MessageEntry({ entry }: { entry: UiChatEntry }) {
 // model made this far, painted as it happens via onToolCall.
 function RunningPanel({ tools }: { tools: { tool: string; input: unknown }[] }) {
   return (
-    <Box flexDirection="column" marginTop={1}>
+    <Box borderStyle="round" flexDirection="column" marginTop={1} padding={1}>
       <Box>
         <Text color="magenta">◐ running</Text>
       </Box>

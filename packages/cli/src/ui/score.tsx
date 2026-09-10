@@ -57,11 +57,11 @@ export function Score({ agent, verify, hasPrev, hasNext, onPrevAgent, onNextAgen
       </Box>
 
       {score === null ? (
-        <Box marginTop={1}>
+        <Box borderStyle="round" marginTop={1} padding={1}>
           <Text dimColor>score unavailable. run verify for a full audit.</Text>
         </Box>
       ) : (
-        <Box flexDirection="column" marginTop={1}>
+        <Box borderStyle="round" flexDirection="column" marginTop={1} padding={1}>
           <Box>
             <Text bold>composite score </Text>
             <Text bold color="cyan">
@@ -86,7 +86,7 @@ export function Score({ agent, verify, hasPrev, hasNext, onPrevAgent, onNextAgen
         </Box>
       )}
 
-      <Box flexDirection="column" marginTop={1}>
+      <Box borderStyle="round" flexDirection="column" marginTop={1} padding={1}>
         {verify.running ? (
           <Text color="magenta">verifying full ledger...</Text>
         ) : lines.length > 0 ? (

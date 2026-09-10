@@ -9,7 +9,7 @@ import { canonicalize } from "./canonical.js";
 import { bytesToHex, hexToBytes, isLowercaseHexOfLength } from "./hex.js";
 import { generateName } from "./names.js";
 import { createProviderClient } from "./providers/index.js";
-import { runAgentLoop, MAX_TURNS, MAX_RUN_MS } from "./run-loop.js";
+import { runAgentLoop, MAX_TURNS, MAX_RUN_MS, normalizeHistory } from "./run-loop.js";
 import { attest, ATTESTATION_LIMITS } from "./attestation.js";
 
 // crypto and encoding decisions, documented here because they are load
@@ -418,6 +418,13 @@ export async function verifyManifest(manifest: AgentManifest, storage: StorageAd
  * is only ever called once the loop converges on a final text output, so a
  * run that timed out, hit the turn cap, or failed at the provider produces
  * no attestation at all.
+ *
+ * params.history is caller-supplied prior conversation, fed to the model as
+ * context only: it never appears in the captured toolsUsed, is never part of
+ * what gets canonicalized/hashed for the attestation, and is never persisted
+ * by this function. the caller owns the full transcript and passes the slice
+ * it wants (bounded to the last MAX_HISTORY_TURNS turns and
+ * MAX_HISTORY_TOTAL_CHARACTERS characters, truncated from the oldest end).
  */
 export async function wrapAgent(
   params: WrapAgentParams,
@@ -448,6 +455,22 @@ export async function wrapAgent(
     );
   }
 
+  // history validation + bounding (adversarial review: caller-supplied
+  // transcript is untrusted input, fail closed before any provider call).
+  // normalizeHistory is pure and deterministic: truncation always drops from
+  // the oldest end and the newest turns are never silently dropped. the
+  // mapped history below is the ONLY thing that reaches the loop; it is
+  // structurally excluded from toolsUsed, the attest payload, and any
+  // persistence (attest() below signs exactly { task, output, toolsUsed }).
+  const history =
+    params.history === undefined ? [] : normalizeHistory(params.history);
+  if (history === "invalid") {
+    return failure(
+      "INVALID_INPUT",
+      'history must be an array of { role: "user" | "assistant", content: non-empty string at most 4000 chars } turns',
+    );
+  }
+
   // failing to construct the client (unknown provider) is a programming
   // error in the caller, not a runtime provider failure; let it throw.
   const client = createProviderClient(params.config, params.apiKey);
@@ -457,7 +480,7 @@ export async function wrapAgent(
     params.config,
     params.tools,
     params.task,
-    { onToolCall: params.options?.onToolCall },
+    { onToolCall: params.options?.onToolCall, history },
   );
   if (!loopResult.ok) {
     return loopResult; // TURN_LIMIT_EXCEEDED / RUN_TIMED_OUT / UNREGISTERED_TOOL / TOOL_ARGUMENT_INVALID / PROVIDER_API_FAILURE

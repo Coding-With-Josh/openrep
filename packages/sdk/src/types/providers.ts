@@ -94,6 +94,17 @@ export interface ToolImplementations {
   [name: string]: ToolImplementation;
 }
 
+// one prior chat turn fed to the model as context. history is CONTEXT ONLY:
+// it is prepended to the conversation the provider sees, and it plays no
+// part in what wrapAgent hashes, signs, or persists for the call (the
+// attestation always covers exactly the new task and its output). the caller
+// owns the full transcript and passes the slice it wants; wrapAgent never
+// fetches or persists history itself.
+export interface ChatHistoryTurn {
+  role: "user" | "assistant";
+  content: string;
+}
+
 // explicit parameters for wrapAgent. all configuration, secrets, and
 // dependencies are passed in by the caller; wrapAgent never reads
 // environment variables or calls loadEnvConfig() itself.
@@ -105,6 +116,10 @@ export interface WrapAgentParams {
   tools: ToolImplementations; // executable implementations keyed by name
   apiKey: string; // the provider api key, held only as a local param
   task: string; // the input the agent is being asked to do
+  // prior turns from an ongoing conversation, fed to the model as context
+  // only. bounded and truncated by normalizeHistory (oldest first); omitted
+  // or [] behaves exactly as before this pass.
+  history?: ChatHistoryTurn[];
   options?: WrapAgentRunOptions;
 }
 

@@ -30,6 +30,19 @@ import { isAbortError, ProviderApiError } from "./providers/errors.js";
 export const MAX_TURNS = 10;
 export const MAX_RUN_MS = 120_000;
 
+// bounds for the caller-supplied conversation history wrapAgent feeds the
+// model as context (see ChatHistoryTurn). history is bounded so an
+// unbounded, ever-growing transcript cannot balloon the provider request or
+// exceed its context window. truncation always drops from the oldest end;
+// the newest turns are never silently dropped. values are a judgment call,
+// documented in technical.md.
+export const MAX_HISTORY_TURNS = 20;
+export const MAX_HISTORY_TOTAL_CHARACTERS = 16_000;
+// per-turn content cap, mirroring attest()'s per-entry serialized limit
+// (MAX_TASK_LENGTH). a single oversized turn is a malformed input, not a
+// truncation candidate.
+export const MAX_HISTORY_TURN_LENGTH = 4000;
+
 export interface RunLoopOptions {
   // how long the whole run may take before the AbortController fires.
   // defaults to MAX_RUN_MS; tests pass a short value to exercise the
@@ -41,6 +54,10 @@ export interface RunLoopOptions {
   // uses this to paint tool calls as they run; when absent the loop's
   // behavior is byte-identical to before (no extra awaits, no extra calls).
   onToolCall?: (toolCall: CapturedToolCall) => void;
+  // prior conversation turns to prepend before the task, already normalized
+  // by normalizeHistory (callers never pass raw input here). context only:
+  // these messages never reach toolsUsed, attest(), or any persistence.
+  history?: ProviderMessage[];
 }
 
 export interface RunLoopResult {
@@ -63,9 +80,11 @@ export async function runAgentLoop(
 ): Promise<Result<RunLoopResult>> {
   const maxTurns = options.maxTurns ?? MAX_TURNS;
   const maxRunMs = options.maxRunMs ?? MAX_RUN_MS;
-  // the conversation accumulates across turns. tool results are appended as
-  // labeled user messages; the tool call itself as an assistant message.
-  const messages: ProviderMessage[] = [{ role: "user", content: task }];
+  // the conversation accumulates across turns. caller-supplied history is
+  // prepended (context only: it never reaches toolsUsed or attest), then the
+  // new task is appended as the latest user turn. tool results are appended
+  // as labeled user messages; the tool call itself as an assistant message.
+  const messages: ProviderMessage[] = [...(options.history ?? []), { role: "user", content: task }];
 
   // all tools offered to the model must have an executable implementation;
   // the whitelist for execution is built from config.tools only.
@@ -216,4 +235,42 @@ function serializeToolOutput(output: unknown): string {
   } catch {
     return String(output);
   }
+}
+
+// validates and bounds caller-supplied history before it reaches the loop or
+// the provider. every rule is fail-closed: a non-array, an unknown role, a
+// non-string or empty content, or a single turn above the per-turn cap all
+// yield "invalid" (wrapAgent maps that to INVALID_INPUT before any provider
+// call). valid input is then bounded from the oldest end: only the last
+// MAX_HISTORY_TURNS turns survive, and then turns are dropped from the
+// oldest side until the total content fits MAX_HISTORY_TOTAL_CHARACTERS.
+// the newest turns are never dropped. this function is pure, so truncation
+// is deterministic and unit-testable without a fake provider.
+export function normalizeHistory(history: unknown): ProviderMessage[] | "invalid" {
+  if (!Array.isArray(history)) return "invalid";
+  const turns: ProviderMessage[] = [];
+  for (const entry of history) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return "invalid";
+    const turn = entry as { role?: unknown; content?: unknown };
+    if (turn.role !== "user" && turn.role !== "assistant") return "invalid";
+    if (typeof turn.content !== "string") return "invalid";
+    // trim for the empty check only: whitespace-only history is junk that
+    // would reach the model, but the stored content is passed through as-is.
+    if (turn.content.trim().length === 0) return "invalid";
+    if (turn.content.length > MAX_HISTORY_TURN_LENGTH) return "invalid";
+    turns.push(turn.role === "assistant" ? { role: "assistant", content: turn.content } : { role: "user", content: turn.content });
+  }
+
+  // turn cap first, then the character budget, both from the oldest end.
+  const recent = turns.slice(-MAX_HISTORY_TURNS);
+  const kept: ProviderMessage[] = [];
+  let used = 0;
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const turn = recent[i];
+    if (used + turn.content.length > MAX_HISTORY_TOTAL_CHARACTERS) continue; // drop this older turn
+    kept.push(turn);
+    used += turn.content.length;
+  }
+  kept.reverse();
+  return kept;
 }

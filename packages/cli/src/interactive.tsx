@@ -22,7 +22,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Box, render, useApp, useInput } from "ink";
-import { createProviderClient, createStockToolset, getScore, wrapAgent, type AgentConfig, type AgentRecord, type AgentScore, type StorageAdapter } from "@openrepso/sdk";
+import { createProviderClient, createStockToolset, getScore, wrapAgent, MAX_HISTORY_TURNS, type AgentConfig, type AgentRecord, type AgentScore, type ChatHistoryTurn, type StorageAdapter } from "@openrepso/sdk";
 import { createHash } from "node:crypto";
 
 import type { CliContext } from "./context.js";
@@ -350,7 +350,7 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
         config,
         tools: toolset.implementations,
         storage: ctx.storage,
-        task: text,
+        ...chatTurnParams(chatByAgent[agent.publicKey] ?? [], text),
         options: {
           source: "native",
           idempotencyKey: idleTurnKey(agent.publicKey, text),
@@ -548,6 +548,40 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
       ) : null}
     </Box>
   );
+}
+
+// --- chat history (context for the next turn) ------------------------------
+
+// the history handed to wrapAgent for one chat turn: previous entries as
+// { role, content } context, minus the current user message (wrapAgent seeds
+// the task itself as the latest user turn, so including it would duplicate
+// it). the drop rule is idempotent by design: handleSend pushes the user
+// entry BEFORE the turn runs (stale state: the push may not be visible yet)
+// while handleRetry runs with the entry already present, so a trailing user
+// entry whose content equals the current text is always removed, whether or
+// not the state flush already included it.
+//
+// the friendly cap here (MAX_HISTORY_TURNS, from the sdk) bounds the array
+// before it leaves the process; the sdk's normalizeHistory enforces the
+// real contract (turn AND character budgets) at its own boundary when the
+// run starts, so a too-long history can never inject a malformed turn.
+export function historySliceForTurn(entries: UiChatEntry[], text: string): ChatHistoryTurn[] {
+  const slice = [...entries];
+  const last = slice[slice.length - 1];
+  if (last !== undefined && last.role === "user" && last.content === text) {
+    slice.pop();
+  }
+  return slice
+    .filter((e): e is UiChatEntry & { role: "user" | "assistant" } => e.role === "user" || e.role === "assistant")
+    .map((e) => ({ role: e.role, content: e.content }))
+    .slice(-MAX_HISTORY_TURNS);
+}
+
+// the wrapAgent input fields for one chat turn: the task plus the history
+// slice. kept as one pure function so the idempotency rule above is unit-
+// tested exactly as the run path uses it.
+export function chatTurnParams(entries: UiChatEntry[], text: string): { task: string; history: ChatHistoryTurn[] } {
+  return { task: text, history: historySliceForTurn(entries, text) };
 }
 
 // --- helpers ---------------------------------------------------------------

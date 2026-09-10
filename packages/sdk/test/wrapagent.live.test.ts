@@ -23,6 +23,7 @@ import {
   GeminiClient,
   OpenAiClient,
   OpenAiCompatibleClient,
+  runAgentLoop,
 } from "../src/index.js";
 import type { AgentConfig, ProviderMessage, ProviderResponse } from "../src/index.js";
 import { sampleConfigFixture } from "./fixtures.js";
@@ -149,5 +150,42 @@ describe("live provider smoke test (opt-in)", () => {
     );
     expect(result.kind).toBe("text");
     if (result.kind === "text") expect(result.text.length).toBeGreaterThan(0);
+  });
+
+  it("runAgentLoop carries prior turns into the second call (coherence)", async () => {
+    const key = process.env.OPENAI_COMPATIBLE_API_KEY;
+    const baseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL;
+    if (!liveEnabled || !key || !baseUrl) {
+      // vitest treats a returned value as a skip note
+      return "skipped: set OPENREP_LIVE_TEST=1, OPENAI_COMPATIBLE_API_KEY, and OPENAI_COMPATIBLE_BASE_URL to run";
+    }
+
+    const model = process.env.OPENAI_COMPATIBLE_MODEL ?? "gpt-4o-mini";
+    const cfg: AgentConfig = { ...sampleConfigFixture, provider: "openai-compatible", model, baseUrl, tools: [] };
+    const client = new OpenAiCompatibleClient(key, baseUrl);
+
+    // call 1: the model learns a secret word; call 2 has no way to know it
+    // except the history passed in. this is the exact bug shape of a chat
+    // follow-up ("benin nigeria" after "which city?") minus the storage.
+    const firstPrompt = "remember the secret word: radiometer. then say exactly: ok";
+    const first = await runAgentLoop(client, cfg, {}, firstPrompt);
+    expect(first.ok).toBe(true);
+    if (!first.ok) return;
+
+    const second = await runAgentLoop(
+      client,
+      cfg,
+      {},
+      "what was the secret word? reply with only that word",
+      {
+        history: [
+          { role: "user", content: firstPrompt },
+          { role: "assistant", content: first.value.output },
+        ],
+      },
+    );
+    expect(second.ok).toBe(true);
+    if (!second.ok) return;
+    expect(second.value.output.toLowerCase()).toContain("radiometer");
   });
 });

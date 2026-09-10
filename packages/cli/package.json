@@ -36,9 +36,12 @@
     "@openrepso/sdk": "workspace:^",
     "commander": "^13.1.0",
     "ink": "^7.1.1",
+    "marked": "^15.0.12",
+    "marked-terminal": "^7",
     "react": "19.2.8"
   },
   "devDependencies": {
+    "@types/marked-terminal": "^6.1.1",
     "@types/node": "^22.0.0",
     "@types/react": "^19",
     "@types/react-reconciler": "^0.33.0",

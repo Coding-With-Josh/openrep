@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import {
   ATTESTATION_LIMITS,
+  MAX_HISTORY_TURNS,
   createStockToolset,
   decryptPrivateKey,
   getScore,
@@ -167,6 +168,23 @@ export async function POST(
 
       const toolset = createStockToolset({ storage: context.storage });
 
+      // the prior transcript as conversation context for this turn. it is
+      // read under the same owner scope as the session key above
+      // ((agentId, session.userId) query-level scoping), so a substituted id
+      // cannot pull another tenant's transcript into the model. the current
+      // message is appended to storage only after the run, so the history
+      // slice always contains previous turns and never duplicates the task
+      // (wrapAgent seeds the task as the latest user turn). the slice is
+      // capped at the sdk MAX_HISTORY_TURNS as a courtesy bound; wrapAgent's
+      // normalizeHistory enforces the real turn and character budgets at its
+      // own boundary. history is context only: it never reaches the
+      // attestation payload or the persisted transcript.
+      const storedTranscript = await context.storage.getChatMessages(id, session.userId);
+      const history = storedTranscript.slice(-MAX_HISTORY_TURNS).map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+
       const runResult = await wrapAgent({
         agentId: id,
         signingKey: decrypted.value,
@@ -175,6 +193,7 @@ export async function POST(
         tools: toolset.implementations,
         apiKey: config.groqApiKey,
         task: message,
+        history,
       });
       if (!runResult.ok) return errorResponse(runResult.error);
 

@@ -39,7 +39,7 @@ export { OpenAiClient, OpenAiCompatibleClient } from "./providers/openai.js";
 export { GeminiClient } from "./providers/gemini.js";
 export { ProviderApiError, ProviderConfigError, isAbortError } from "./providers/errors.js";
 export { validateAgainstSchema } from "./providers/validate.js";
-export { runAgentLoop, MAX_TURNS, MAX_RUN_MS } from "./run-loop.js";
+export { runAgentLoop, MAX_TURNS, MAX_RUN_MS, normalizeHistory, MAX_HISTORY_TURNS, MAX_HISTORY_TOTAL_CHARACTERS, MAX_HISTORY_TURN_LENGTH } from "./run-loop.js";
 export { ATTESTATION_LIMITS } from "./attestation.js";
 export { getScore, SCORE_MAX_ATTESTATIONS, SCORE_PAGE_LIMIT } from "./score.js";
 export type { GetScoreOptions } from "./score.js";

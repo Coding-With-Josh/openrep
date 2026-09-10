@@ -101,6 +101,27 @@ openrep ingest -f attestation.json -s <source> -a beautiful-pig-black.agent
 
 `openrep create` takes custody of the generated keys in the os keychain (encrypted-file fallback); headless and ci runs can inject `OPENREP_SIGNING_KEY` instead.
 
+### interactive tui
+
+running `openrep` with no subcommand on a tty opens a four-screen tui: splash, dashboard, chat, score. one chat turn is a real wrapped agent run: each reply is a signed attestation, and the provider api key prompt is masked and never recalled.
+
+| keys | meaning |
+| --- | --- |
+| any key | splash -> dashboard |
+| enter / `s` / `r` then `y` | dashboard: chat / score / revoke confirm |
+| `n` | dashboard: create agent |
+| `q` / ctrl+c | quit |
+| esc | chat/score: back to dashboard; key prompt: cancel |
+| ctrl+r | chat: retry the last user message |
+| up/down | dashboard: select agent; chat: recall previous messages; score: neighbor agent |
+| left/right | chat input: move cursor |
+| option/ctrl+left/right | chat input: jump by word (macos option, linux/windows ctrl) |
+| option/ctrl+backspace | chat input: delete word |
+| ctrl+u / ctrl+k | chat input: kill to line start / line end |
+| `?` | splash: help overlay |
+
+assistant replies render real markdown (headers, bold, lists, code blocks with syntax highlighting) via marked + marked-terminal. each turn sends the prior chat transcript to `wrapAgent` as conversation context, capped by the sdk's 20-turn / 16,000-char history budget.
+
 ## known limitations (honest)
 
 - the marketplace ingestion source does not exist yet. the plan is a small real app at `apps/marketplace` (post, claim, complete, rate — the frontend hand-built without ai assistance); the sdk-side ingestion is ready, but no real external attestations are flowing until then.
@@ -110,7 +131,7 @@ openrep ingest -f attestation.json -s <source> -a beautiful-pig-black.agent
 
 ## tests
 
-the sdk and cli ship 31 test files (vitest), covering real sqlite and real hosted libsql, key rotation, revocation, concurrency, canonicalization, providers, custody, and live integration flows.
+the sdk and cli ship 35 test files (vitest), covering real sqlite and real hosted libsql, key rotation, revocation, concurrency, canonicalization, providers, custody, chat history bounds, input editing, and live integration flows.
 
 <br/>
 

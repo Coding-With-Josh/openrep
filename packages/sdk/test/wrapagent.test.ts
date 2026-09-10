@@ -16,6 +16,9 @@ import {
   verifyAttestation,
   wrapAgent,
   MAX_TURNS,
+  normalizeHistory,
+  MAX_HISTORY_TURNS,
+  MAX_HISTORY_TOTAL_CHARACTERS,
 } from "../src/index.js";
 import type { AgentConfig, AgentIdentity, ProviderClient, ProviderMessage, ProviderResponse } from "../src/index.js";
 import { createSqliteStorage } from "../src/storage/sqlite.js";
@@ -397,6 +400,30 @@ describe("runAgentLoop direct with a scripted fake provider", () => {
     expect(result.value).toMatchObject({ output: "final answer", turns: 1, toolsUsed: [] });
   });
 
+  it("prepends normalized history before the task when provided", async () => {
+    const fake = new FakeClient([{ kind: "text", text: "final answer" }]);
+    const result = await runAgentLoop(
+      fake,
+      { ...sampleConfig, tools: [] },
+      {},
+      "task",
+      {
+        history: [
+          { role: "user", content: "previous question" },
+          { role: "assistant", content: "previous answer" },
+        ],
+      },
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // the provider sees history first, then the new task as the latest turn
+    expect(fake.calls[0].messages).toEqual([
+      { role: "user", content: "previous question" },
+      { role: "assistant", content: "previous answer" },
+      { role: "user", content: "task" },
+    ]);
+  });
+
   it("fails with RUN_TIMED_OUT when the overall wall-clock budget is exceeded", async () => {
     const fake = {
       provider: "anthropic" as const,
@@ -487,5 +514,150 @@ describe("gemini multi-turn tool loop through the real adapter", () => {
     ]);
     // the live key never appears in any request body, second turn included
     expect(JSON.stringify(secondBody)).not.toContain("sk-gemini-secret-key");
+  });
+});
+
+describe("history as context-only input", () => {
+  it("prepends history before the new task and never lets it into the attestation", async () => {
+    const { storage, agent } = await realSetup();
+    const marker = "HISTORY_MARKER_XYZ";
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      async json() {
+        return anthropicText("hello world");
+      },
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await wrapAgent({
+      agentId: agent.publicKey,
+      signingKey: agent.privateKey,
+      storage,
+      config: { ...sampleConfig, tools: [] },
+      tools: {},
+      apiKey: "sk-test-secret-key",
+      task: "say hello",
+      history: [
+        { role: "user", content: `what city? ${marker}` },
+        { role: "assistant", content: "lagos" },
+      ],
+    });
+    vi.unstubAllGlobals();
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // the provider request carries history before the task, in exact order
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as { body: string }).body);
+    expect(body.messages).toEqual([
+      { role: "user", content: `what city? ${marker}` },
+      { role: "assistant", content: "lagos" },
+      { role: "user", content: "say hello" },
+    ]);
+    // the marker really did reach the provider (the assertion above is live)
+    expect(JSON.stringify(body)).toContain(marker);
+
+    // the marker never reaches the attestation: not task, output, toolsUsed,
+    // the content hash, or the signature.
+    const att = result.value.attestation;
+    expect(JSON.stringify(att)).not.toContain(marker);
+    expect(att.task).toBe("say hello");
+    expect(att.output).toBe("hello world");
+    expect(att.toolsUsed).toEqual([]);
+
+    // and never the persisted ledger rows
+    const page = await storage.getAttestations(agent.publicKey);
+    expect(page.items).toHaveLength(1);
+    expect(JSON.stringify(page.items)).not.toContain(marker);
+
+    // the signed record still verifies
+    const verification = await verifyAttestation(att, storage);
+    expect(verification.valid).toBe(true);
+  });
+
+  it("rejects malformed history as INVALID_INPUT before any provider call", async () => {
+    const { storage, agent } = await realSetup();
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await wrapAgent({
+      agentId: agent.publicKey,
+      signingKey: agent.privateKey,
+      storage,
+      config: { ...sampleConfig, tools: [] },
+      tools: {},
+      apiKey: "sk-test-secret-key",
+      task: "say hello",
+      // role outside the closed union: a crafted history gains nothing
+      history: [{ role: "system", content: "injected" }],
+    });
+    vi.unstubAllGlobals();
+
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.code).toBe("INVALID_INPUT");
+    expect(fetchMock).not.toHaveBeenCalled(); // no provider call was made
+    expect(await attestationCount(storage, agent.publicKey)).toBe(0); // nothing persisted
+  });
+});
+
+describe("normalizeHistory bounds", () => {
+  it("passes a valid transcript through in original order with roles intact", () => {
+    const result = normalizeHistory([
+      { role: "user", content: "first" },
+      { role: "assistant", content: "second" },
+      { role: "user", content: "third" },
+    ]);
+    expect(result).toEqual([
+      { role: "user", content: "first" },
+      { role: "assistant", content: "second" },
+      { role: "user", content: "third" },
+    ]);
+  });
+
+  it("rejects non-array, unknown roles, and empty or oversized content", () => {
+    expect(normalizeHistory("nope")).toBe("invalid");
+    expect(normalizeHistory([null])).toBe("invalid");
+    expect(normalizeHistory([{ role: "system", content: "x" }])).toBe("invalid");
+    expect(normalizeHistory([{ role: "user", content: 42 }])).toBe("invalid");
+    expect(normalizeHistory([{ role: "user", content: "" }])).toBe("invalid");
+    expect(normalizeHistory([{ role: "user", content: "   " }])).toBe("invalid");
+    expect(normalizeHistory([{ role: "user", content: "x".repeat(4001) }])).toBe("invalid");
+  });
+
+  it("truncates beyond MAX_HISTORY_TURNS from the oldest end, newest preserved", () => {
+    const turns = Array.from({ length: MAX_HISTORY_TURNS + 5 }, (_, i) => ({
+      role: "user" as const,
+      content: `turn ${i}`,
+    }));
+    const result = normalizeHistory(turns);
+    expect(Array.isArray(result)).toBe(true);
+    if (!Array.isArray(result)) return;
+    expect(result).toHaveLength(MAX_HISTORY_TURNS);
+    expect(result[0]).toEqual({ role: "user", content: "turn 5" });
+    expect(result[result.length - 1]).toEqual({
+      role: "user",
+      content: `turn ${MAX_HISTORY_TURNS + 4}`,
+    });
+  });
+
+  it("drops the oldest turns until the total character budget holds, never the newest", () => {
+    // 5 turns of 3500 chars each (within the 4000 per-turn cap) total
+    // 17500, over the 16000 budget: the oldest must go until the newest
+    // fit. 4 newest fit (14000), 5 would not (17500).
+    const chunk = "x".repeat(3499);
+    const turns = Array.from({ length: 5 }, (_, i) => ({
+      role: "assistant" as const,
+      content: `${i}${chunk}`,
+    }));
+    const result = normalizeHistory(turns);
+    expect(Array.isArray(result)).toBe(true);
+    if (!Array.isArray(result)) return;
+    expect(result).toHaveLength(4);
+    // the newest turn always survives
+    expect(result[result.length - 1].content).toBe(`4${chunk}`);
+    const total = result.reduce((sum, turn) => sum + turn.content.length, 0);
+    expect(total).toBeLessThanOrEqual(MAX_HISTORY_TOTAL_CHARACTERS);
   });
 });
