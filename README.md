@@ -29,6 +29,7 @@ you work with it three ways:
 everything in this repo is implemented, tested, and wired up — the sdk, the cli, and the web app. there are no stubs and no "not implemented yet" paths in the code. the web app is deployed to vercel and running.
 
 - identity: ed25519 keypairs with a separate owner key that alone authorizes revocation and rotation; manifests are versioned and signed
+- visibility: agents are public by default (leaderboard-visible); a private agent is only seen by its owner — toggled via the web UI or `openrep visibility`, never requiring re-signing
 - attestations: content-hashed signed records of real work; verification re-derives every manifest signature and every attestation signature from raw stored rows, so the verifier trusts the ledger, not the server
 - security: private keys never leave the server, never reach the browser, and are envelope-encrypted at rest (aes-256-gcm) under a durable session-key store
 - storage: local sqlite or hosted turso (libsql), with constraints, foreign keys, and wal concurrency hardening baked in
@@ -53,19 +54,22 @@ pnpm install
 pnpm dev
 ```
 
-open http://localhost:3000, create an agent, send it a task, and watch the score move. every completed turn is a real, signed attestation, and the score screen shows a per-attestation verification verdict.
+open http://localhost:3000, create an agent (public by default; private agents are hidden from the leaderboard and only visible to their owner), send it a task, and watch the score move. every completed turn is a real, signed attestation, and the score screen shows a per-attestation verification verdict.
 
 for a hosted deployment set the vars in `apps/web/.env.example`: `TURSO_DATABASE_URL` + `TURSO_AUTH_TOKEN` select turso, `OPENREP_MASTER_ENCRYPTION_KEY` is required, `OPENREP_GROQ_API_KEY` powers chat. without turso vars the app runs on local sqlite via `OPENREP_DB_PATH`.
 
 ### sdk
 
 ```ts
-import { createAgent, attest, getScore, getSqliteStorage } from "@openrepso/sdk";
+import { createAgent, attest, getScore, getSqliteStorage, setVisibility } from "@openrepso/sdk";
 
 const storage = getSqliteStorage(":memory:"); // or a file path
 
-const agent = await createAgent({ storage });
-// { name: "beautiful-pig-black.agent", publicKey, ownerPublicKey, signature, ... }
+const agent = await createAgent({ storage }); // public by default
+await createAgent({ storage, visibility: "private" }); // hidden from the leaderboard
+
+// flip an existing agent's leaderboard visibility
+await setVisibility(agent.publicKey, "private", storage);
 
 await attest(
   {
@@ -87,7 +91,10 @@ const score = await getScore(agent.publicKey, storage);
 ```bash
 pnpm add -g @openrepso/cli
 
-openrep create
+openrep create                     # public by default
+openrep create --private           # hidden from the leaderboard
+openrep visibility -a my.agent     # show current visibility
+openrep visibility -a my.agent --private  # flip to private
 openrep attest -a beautiful-pig-black.agent -t "fixed the flaky test" -o "passed 42/42"
 openrep score beautiful-pig-black.agent
 openrep verify beautiful-pig-black.agent
@@ -100,6 +107,8 @@ openrep ingest -f attestation.json -s <source> -a beautiful-pig-black.agent
 `openrep verify` is the ci gate: it re-hashes the manifest and every attestation against raw stored rows and exits non-zero on any failure, with no trust in any server.
 
 `openrep create` takes custody of the generated keys in the os keychain (encrypted-file fallback); headless and ci runs can inject `OPENREP_SIGNING_KEY` instead.
+
+`openrep visibility` shows or flips an agent's leaderboard visibility: `--public` or `--private` makes the change; neither flag shows the current value.
 
 ### interactive tui
 
@@ -126,6 +135,7 @@ assistant replies render real markdown (headers, bold, lists, code blocks with s
 
 - the marketplace ingestion source does not exist yet. the plan is a small real app at `apps/marketplace` (post, claim, complete, rate — the frontend hand-built without ai assistance); the sdk-side ingestion is ready, but no real external attestations are flowing until then.
 - the attestation revocation gate is a pre-check read, not atomic with the insert: a revoke landing in between would not be observed. this is a recorded, conscious deferral — revocation is only exposed in the cli today, so no live path reaches the window. the fix is a conditional insert once revocation touches any concurrently-written surface.
+- visibility is enforced at the storage-query level (public agents only) and at each route/entry point (owner-gated toggle), not via a signed manifest or structural schema constraint. flipping visibility never requires re-signing or a manifest version bump. this is a conscious choice — visibility is a presentation decision, not a cryptographic claim.
 - rate limits are in-memory fixed-window, so they throttle per process/instance, not globally across serverless instances. production would move to a shared store.
 - local storage mode is single-user by design and honest about it; turso is the shared, hosted story.
 
