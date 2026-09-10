@@ -6,9 +6,14 @@
 // state machine (see build-phase 1):
 //   splash -> dashboard (any key)              [help overlay ? toggles]
 //   dashboard -> chat (enter) / score (s) / create (n) / revoke (r + y)
-//   chat -> dashboard (esc)
-//   score -> dashboard (esc)
+//   chat -> dashboard (esc)                    [key prompt: saved key -> turn]
+//   score -> dashboard (esc) / prev/next agent (up/down)
 //   any screen -> exit (ctrl+c, q on dashboard)
+//
+// chat sub-state: when a turn is sent with no provider key anywhere
+// (env -> custody stores), the turn is parked on a masked key prompt. saving
+// a key persists it via custody (keychain/encrypted file), then resumes the
+// parked turn; esc cancels the prompt and stays on chat.
 //
 // every action that can prompt for a passphrase (custody resolution) runs
 // inside suspendTerminal so the secret never crosses the tui's raw-mode
@@ -21,7 +26,7 @@ import { createProviderClient, createStockToolset, getScore, wrapAgent, type Age
 import { createHash } from "node:crypto";
 
 import type { CliContext } from "./context.js";
-import { newSessionId, type CliEnv, type AgentProviderConfig } from "./config.js";
+import { isProviderApiKey, newSessionId, type CliEnv, type AgentProviderConfig } from "./config.js";
 import { runCreateAgent, runRevokeAgent, runVerifyAgent, type ActionOutcome } from "./commands/actions.js";
 import { CustodyError } from "./custody/types.js";
 import { Splash } from "./ui/splash.js";
@@ -65,6 +70,20 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
   // score screens are mutually exclusive with each other and with the
   // dashboard, so one handle serves both.
   const [currentPub, setCurrentPub] = useState<string | null>(null);
+
+  // --- provider api key state ----------------------------------------------
+  // apiKeyRef holds the effective key for this session: the env value wins,
+  // else a key resolved from the custody stores, else a key the user typed
+  // and saved. it lives in a ref (never renders) so the raw secret cannot
+  // reach the render tree; only the flags below drive the ui.
+  const apiKeyRef = useRef<string | undefined>(undefined);
+  // whether a key is known this session without resuming the custody walk.
+  const [apiKeyResolved, setApiKeyResolved] = useState(false);
+  // a chat turn parked because no key was found: the chat screen renders a
+  // masked key prompt instead of the message input until the user cancels
+  // or saves a key.
+  const [keyPrompt, setKeyPrompt] = useState<{ agent: AgentRecord; text: string } | null>(null);
+  const [keySaving, setKeySaving] = useState(false);
 
   // per-agent verify state (audit buffers are agent scoped, like the ci
   // command is per agent).
@@ -250,18 +269,51 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
 
   async function runChatTurn(agent: AgentRecord, text: string): Promise<void> {
     if (busyRef.current) return;
+    setError(null);
+
+    // resolve the provider key at the point of use, in precedence order:
+    // env (OPENREP_AGENT_API_KEY), then whatever this session already holds
+    // (custody-resolved or user-saved), then the custody stores. only when
+    // every source comes up empty does the turn park on the key prompt. the
+    // env value wins over a stored key, mirroring the identity-key walk.
+    let key = provider.apiKey !== undefined && provider.apiKey.length > 0 ? provider.apiKey : apiKeyRef.current;
+    if (key === undefined) {
+      if (provider.apiKey !== undefined && !isProviderApiKey(provider.apiKey)) {
+        setError({
+          code: "INVALID_INPUT",
+          message: "OPENREP_AGENT_API_KEY is not a valid provider api key (non-empty, at most 512 chars)",
+        });
+        return;
+      }
+      try {
+        // the encrypted-file fallback may prompt for a passphrase first;
+        // that prompt owns the terminal, so the lookup runs under suspension.
+        const stored = await withSuspended(app.suspendTerminal, () => ctx.custody.resolveApiKey("groq"));
+        key = stored?.key;
+        if (key !== undefined) {
+          apiKeyRef.current = key;
+          setApiKeyResolved(true);
+        }
+      } catch (err) {
+        if (err instanceof CustodyError) {
+          setError({ code: err.code, message: err.message });
+        } else {
+          setError({ code: "INTERNAL", message: "unexpected error resolving the provider api key" });
+        }
+        return;
+      }
+      if (key === undefined) {
+        // no key anywhere: park the turn on the masked key prompt. busy is
+        // NOT set here, so the prompt can take input; the turn resumes when
+        // the user saves a key or cancels.
+        setKeyPrompt({ agent, text });
+        return;
+      }
+    }
+
     busyRef.current = true;
     setChatSending(true);
-    setError(null);
     setLiveTools([]);
-
-    if (provider.apiKey === undefined) {
-      // fail closed: no key, no guess. dashboard/score stay fully usable.
-      setError({ code: "PROVIDER_KEY_MISSING", message: "OPENREP_AGENT_API_KEY is not set; chat needs a provider api key" });
-      busyRef.current = false;
-      setChatSending(false);
-      return;
-    }
 
     try {
       // the identity key may live behind a passphrase prompt (encrypted file
@@ -289,12 +341,12 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
       };
       // createProviderClient validates the base url (https/http) before any
       // request; a bad url is a config error, not a runtime provider failure.
-      const client = createProviderClient(config, provider.apiKey);
+      const client = createProviderClient(config, key);
 
       const result = await wrapAgent({
         agentId: agent.publicKey,
         signingKey: resolution.key,
-        apiKey: provider.apiKey,
+        apiKey: key,
         config,
         tools: toolset.implementations,
         storage: ctx.storage,
@@ -334,6 +386,47 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
     }
   }
 
+  // the masked key prompt's submit: validate, persist via custody (which may
+  // prompt for a passphrase under suspension), then resume the parked turn.
+  // the key only becomes effective after the store accepted it: a failed
+  // save is surfaced, never silently used for the turn.
+  async function handleKeySubmit(raw: string): Promise<void> {
+    if (keySaving) return;
+    const key = raw.trim();
+    if (!isProviderApiKey(key)) {
+      setError({
+        code: "INVALID_INPUT",
+        message: "provider api key must be non-empty and at most 512 chars",
+      });
+      return;
+    }
+    const pending = keyPrompt;
+    if (pending === null) return;
+    setKeySaving(true);
+    setError(null);
+    try {
+      await withSuspended(app.suspendTerminal, () => ctx.custody.storeApiKey("groq", key));
+      apiKeyRef.current = key;
+      setApiKeyResolved(true);
+      setKeyPrompt(null);
+      setKeySaving(false);
+      await runChatTurn(pending.agent, pending.text);
+    } catch (err) {
+      setKeySaving(false);
+      if (err instanceof CustodyError) {
+        setError({ code: err.code, message: err.message });
+      } else {
+        setError({ code: "INTERNAL", message: "unexpected error saving the provider api key" });
+      }
+    }
+  }
+
+  function handleKeyCancel(): void {
+    if (keySaving) return;
+    setKeyPrompt(null);
+    setError(null);
+  }
+
   async function handleSend(row: UiAgentRow, text: string): Promise<void> {
     pushUserEntry(row.record.publicKey, text);
     await runChatTurn(row.record, text);
@@ -354,6 +447,13 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
   // placeholder record when the poll has not loaded it yet (first paint
   // before the initial reconcile completes).
   const activeRow: UiAgentRow | null = currentPub === null ? null : (rows.find((r) => r.record.publicKey === currentPub) ?? null);
+
+  // neighbors for the score screen's up/down navigation: computed from the
+  // reconciled row order, clamped at the list ends (no wrap). a placeholder
+  // row (not yet in the reconciled list) disables both directions.
+  const currentIndex = currentPub === null ? -1 : rows.findIndex((r) => r.record.publicKey === currentPub);
+  const scorePrevRow = currentIndex > 0 ? (rows[currentIndex - 1] ?? null) : null;
+  const scoreNextRow = currentIndex >= 0 && currentIndex < rows.length - 1 ? (rows[currentIndex + 1] ?? null) : null;
 
   return (
     <Box flexDirection="column">
@@ -403,7 +503,11 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
           entries={chatByAgent[currentPub] ?? []}
           liveTools={liveTools}
           sending={chatSending}
-          apiKeyMissing={provider.apiKey === undefined}
+          apiKeyMissing={provider.apiKey === undefined || provider.apiKey.length === 0 ? !apiKeyResolved : false}
+          keyPromptActive={keyPrompt !== null}
+          keySaving={keySaving}
+          onKeySubmit={(key) => void handleKeySubmit(key)}
+          onKeyCancel={handleKeyCancel}
           onSend={(text) => void handleSend(activeRow ?? placeholderRow(currentPub), text)}
           onBack={() => {
             setScreen("dashboard");
@@ -418,6 +522,20 @@ export function InteractiveApp({ ctx, provider, initialScreen = "splash" }: Inte
         <Score
           agent={activeRow ?? placeholderRow(currentPub)}
           verify={verifyByAgent[currentPub] ?? { running: false, lines: [], failed: false }}
+          hasPrev={scorePrevRow !== null}
+          hasNext={scoreNextRow !== null}
+          onPrevAgent={() => {
+            if (scorePrevRow !== null) {
+              setCurrentPub(scorePrevRow.record.publicKey);
+              setError(null);
+            }
+          }}
+          onNextAgent={() => {
+            if (scoreNextRow !== null) {
+              setCurrentPub(scoreNextRow.record.publicKey);
+              setError(null);
+            }
+          }}
           onVerify={() => {
             if (activeRow !== null) void handleVerify(activeRow);
           }}

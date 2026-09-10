@@ -14,15 +14,30 @@ import { ErrorLine } from "./splash.js";
 export interface ScoreProps {
   agent: UiAgentRow;
   verify: UiVerifyState;
+  hasPrev: boolean;
+  hasNext: boolean;
+  onPrevAgent: () => void;
+  onNextAgent: () => void;
   onVerify: () => void;
   onBack: () => void;
   error: UiError | null;
 }
 
-export function Score({ agent, verify, onVerify, onBack, error }: ScoreProps) {
+export function Score({ agent, verify, hasPrev, hasNext, onPrevAgent, onNextAgent, onVerify, onBack, error }: ScoreProps) {
   useInput((input, key) => {
     if (key.escape) {
       onBack();
+      return;
+    }
+    // up/down jump to the previous/next stored agent on the same screen; the
+    // app-level handler supplies hasPrev/hasNext so the list bounds are
+    // clamped, never wrapped.
+    if (key.upArrow && hasPrev) {
+      onPrevAgent();
+      return;
+    }
+    if (key.downArrow && hasNext) {
+      onNextAgent();
       return;
     }
     if (input === "v" || input === "V") {
@@ -86,7 +101,7 @@ export function Score({ agent, verify, onVerify, onBack, error }: ScoreProps) {
       </Box>
 
       <Box marginTop={1}>
-        <Text dimColor>esc back · v verify full ledger</Text>
+        <Text dimColor>esc back · v verify full ledger · ↑/↓ agent</Text>
       </Box>
 
       {error !== null ? <ErrorLine error={error} /> : null}

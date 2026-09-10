@@ -19,12 +19,12 @@
 import { mkdirSync } from "node:fs";
 import type { AgentIdentity } from "@openrepso/sdk";
 
-import { defaultCredentialsFilePath, openrepHomeDir, type CliEnv } from "../config.js";
+import { defaultCredentialsFilePath, isProviderApiKey, openrepHomeDir, type CliEnv } from "../config.js";
 import { isEd25519PrivateKeyHex } from "../hex.js";
 import { createEncryptedFileStore } from "./encrypted-file.js";
 import { createKeychainStore } from "./keychain.js";
 import { readPassphraseFromTerminal } from "./passphrase.js";
-import { CustodyError, identityAccount, ownerAccount, type KeyStore } from "./types.js";
+import { apiKeyAccount, CustodyError, identityAccount, ownerAccount, type KeyStore } from "./types.js";
 
 export interface CustodyResolution {
   key: string;
@@ -37,6 +37,16 @@ export interface Custody {
   resolveIdentityKey(publicKey: string): Promise<CustodyResolution | null>;
   // resolve the owner key for an agent (used by `openrep revoke`).
   resolveOwnerKey(publicKey: string): Promise<CustodyResolution | null>;
+  // resolve the provider api key for a provider by walking the stores in
+  // precedence order, or null when no store holds one. the caller owns env
+  // precedence (OPENREP_AGENT_API_KEY wins over a stored key), exactly like
+  // resolveIdentityKey defers the env check to this resolver's own env walk.
+  resolveApiKey(provider: string): Promise<CustodyResolution | null>;
+  // persist a provider api key (the chat screen's "save key" path). the key
+  // is shape-validated before any store sees it. throws CustodyError when no
+  // store accepts it, so a caller can never believe a key was persisted that
+  // was not.
+  storeApiKey(provider: string, apiKey: string): Promise<void>;
   // persist the freshly generated identity + owner keys for a new agent.
   // both keys land in the same store so a successful create never leaves an
   // agent half-revocable; throws CustodyError when no store accepts them.
@@ -129,9 +139,56 @@ export function createCustody(env: CliEnv, options: CustodyOptions = {}): Custod
     );
   }
 
+  async function resolveApiKey(provider: string): Promise<CustodyResolution | null> {
+    const account = apiKeyAccount(provider);
+    for (const store of stores) {
+      let secret: string | null;
+      try {
+        secret = await store.get(account);
+      } catch (err) {
+        note(`${store.kind} unavailable: ${(err as Error).message}`);
+        continue;
+      }
+      if (secret === null) continue;
+      if (!isProviderApiKey(secret)) {
+        throw new CustodyError(
+          "INVALID_INPUT",
+          `stored api key for ${account} in ${store.kind} is not a valid provider api key`,
+        );
+      }
+      if (store.kind === "encrypted-file") note("using provider api key from encrypted file fallback");
+      return { key: secret, source: store.kind };
+    }
+    return null;
+  }
+
+  async function storeApiKey(provider: string, apiKey: string): Promise<void> {
+    // shape validation is the caller's contract with the secret: a key that
+    // fails the shape check never reaches a store, so a damaged store can
+    // never be created out of a paste-bomb.
+    if (!isProviderApiKey(apiKey)) {
+      throw new CustodyError("INVALID_INPUT", "provider api key must be non-empty and at most 512 chars");
+    }
+    const account = apiKeyAccount(provider);
+    for (const store of stores) {
+      try {
+        await store.set(account, apiKey);
+        return;
+      } catch (err) {
+        note(`could not store the provider api key in ${store.kind}: ${(err as Error).message}`);
+      }
+    }
+    throw new CustodyError(
+      "STORAGE_WRITE_FAILED",
+      "no key store accepted the provider api key; it was NOT saved",
+    );
+  }
+
   return {
     resolveIdentityKey: (publicKey) => resolveKey("identity", publicKey),
     resolveOwnerKey: (publicKey) => resolveKey("owner", publicKey),
+    resolveApiKey,
+    storeApiKey,
     async storeAgentKeys(identity) {
       // ensure the fallback store's parent exists before any store writes;
       // harmless when the keychain wins the race.

@@ -23,6 +23,19 @@ export function ownerAccount(publicKey: string): string {
 
 export const SERVICE_NAME = "openrep";
 
+// provider api key naming convention: one entry per provider so a later
+// version can store keys for multiple providers side by side
+// (apikey/groq, apikey/anthropic, ...). the provider name is never free-form
+// input: it comes from the caller against a fixed allow-list, and a stray
+// path-ish name is rejected here so an attacker-controlled string can never
+// smuggle a traversal into the keychain/service account names.
+export function apiKeyAccount(provider: string): string {
+  if (provider.length === 0 || provider.length > 64 || provider.includes("/") || provider.includes(".") || provider.includes("..")) {
+    throw new TypeError(`invalid provider api key account name: ${provider}`);
+  }
+  return `apikey/${provider}`;
+}
+
 // typed custody failure, with the code vocabulary commands surface in their
 // error output. custody errors are cli-side; the sdk itself never sees them.
 export class CustodyError extends Error {

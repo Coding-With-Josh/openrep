@@ -12,6 +12,7 @@ import { Splash } from "../src/ui/splash.js";
 import { Dashboard } from "../src/ui/dashboard.js";
 import { Chat } from "../src/ui/chat.js";
 import { Score } from "../src/ui/score.js";
+import { PromptInput } from "../src/ui/prompt.js";
 import type { UiAgentRow, UiChatEntry, UiVerifyState } from "../src/ui/types.js";
 
 function makeRow(name: string, pub: string, scoreComposite: number | null): UiAgentRow {
@@ -104,7 +105,7 @@ describe("Dashboard", () => {
     expect(out).toContain("your agents");
     expect(out).toContain("1 ● loud-fox-7.agent");
     expect(out).toContain("7f3a...4b1d · native 4 · chat 3");
-    expect(out).toContain("[n] new agent   [enter] chat   [s] score   [r] revoke   [q] quit");
+    expect(out).toContain("[n] new agent   [enter] chat   [s] score   [r] revoke   [q] quit   ↑/↓ select");
   });
 
   it("renders the revoke confirmation when armed", () => {
@@ -173,6 +174,10 @@ describe("Chat", () => {
         liveTools={[]}
         sending={false}
         apiKeyMissing={false}
+        keyPromptActive={false}
+        keySaving={false}
+        onKeySubmit={() => {}}
+        onKeyCancel={() => {}}
         onSend={() => {}}
         onBack={() => {}}
         onRetry={() => {}}
@@ -197,6 +202,10 @@ describe("Chat", () => {
         liveTools={[{ tool: "web_search", input: { query: "openrep" } }]}
         sending={true}
         apiKeyMissing={false}
+        keyPromptActive={false}
+        keySaving={false}
+        onKeySubmit={() => {}}
+        onKeyCancel={() => {}}
         onSend={() => {}}
         onBack={() => {}}
         onRetry={() => {}}
@@ -216,13 +225,43 @@ describe("Chat", () => {
         liveTools={[]}
         sending={false}
         apiKeyMissing={true}
+        keyPromptActive={false}
+        keySaving={false}
+        onKeySubmit={() => {}}
+        onKeyCancel={() => {}}
         onSend={() => {}}
         onBack={() => {}}
         onRetry={() => {}}
         error={null}
       />,
     );
-    expect(out).toContain("no OPENREP_AGENT_API_KEY");
+    expect(out).toContain("no provider api key; chat will ask for one when you send a message");
+  });
+
+  it("renders the masked key prompt instead of the message input", () => {
+    const out = renderToString(
+      <Chat
+        agent={row}
+        previousScore={1.2}
+        entries={entries}
+        liveTools={[]}
+        sending={false}
+        apiKeyMissing={true}
+        keyPromptActive={true}
+        keySaving={false}
+        onKeySubmit={() => {}}
+        onKeyCancel={() => {}}
+        onSend={() => {}}
+        onBack={() => {}}
+        onRetry={() => {}}
+        error={null}
+      />,
+    );
+    expect(out).toContain("paste one to save and send");
+    expect(out).toContain("groq api key (gsk_...)");
+    // the regular message input is replaced while the prompt is open.
+    expect(out).not.toContain("ask the agent to research, fetch, or summarize");
+    expect(out).toContain("esc cancel · key is saved to keychain/encrypted store");
   });
 });
 
@@ -235,22 +274,24 @@ describe("Score", () => {
 
   it("renders the breakdown bars exactly as documented", () => {
     const out = renderToString(
-      <Score agent={row} verify={{ running: false, lines: [], failed: false }} onVerify={() => {}} onBack={() => {}} error={null} />,
+      <Score agent={row} verify={{ running: false, lines: [], failed: false }} hasPrev={false} hasNext={false} onPrevAgent={() => {}} onNextAgent={() => {}} onVerify={() => {}} onBack={() => {}} error={null} />,
     );
     expect(out).toContain("composite score 1.40");
     expect(out).toContain("native   0.80  ████████░░░░░░░░  4 attestations");
-    expect(out).toContain("esc back · v verify full ledger");
+    expect(out).toContain("esc back · v verify full ledger · ↑/↓ agent");
   });
 
   it("renders the audit lines after a successful verify", () => {
-    const out = renderToString(<Score agent={row} verify={verify} onVerify={() => {}} onBack={() => {}} error={null} />);
+    const out = renderToString(
+      <Score agent={row} verify={verify} hasPrev={false} hasNext={false} onPrevAgent={() => {}} onNextAgent={() => {}} onVerify={() => {}} onBack={() => {}} error={null} />,
+    );
     expect(out).toContain("manifest: ok");
     expect(out).toContain("summary: 1/1 attestations valid, manifest valid");
   });
 
   it("renders the running state", () => {
     const out = renderToString(
-      <Score agent={row} verify={{ running: true, lines: [], failed: false }} onVerify={() => {}} onBack={() => {}} error={null} />,
+      <Score agent={row} verify={{ running: true, lines: [], failed: false }} hasPrev={false} hasNext={false} onPrevAgent={() => {}} onNextAgent={() => {}} onVerify={() => {}} onBack={() => {}} error={null} />,
     );
     expect(out).toContain("verifying full ledger...");
   });
@@ -275,5 +316,21 @@ describe("error line", () => {
     // substring.
     expect(out).toMatch(/PROVIDER_KEY_MISSING: OPENREP_AGENT_API_KEY is not set/);
     expect(out).toContain("chat needs a provider");
+  });
+});
+
+describe("PromptInput secret mode", () => {
+  it("masks every character and never renders the raw value", () => {
+    const secret = "gsk_abc123secret";
+    const out = renderToString(
+      <PromptInput value={secret} onChange={() => {}} onSubmit={() => {}} focused placeholder="groq api key (gsk_...)" secret />,
+    );
+    expect(out).not.toContain(secret);
+    expect(out).toContain("●".repeat(secret.length));
+  });
+
+  it("renders the raw value when not secret (the message input)", () => {
+    const out = renderToString(<PromptInput value="hello" onChange={() => {}} onSubmit={() => {}} focused />);
+    expect(out).toContain("hello");
   });
 });

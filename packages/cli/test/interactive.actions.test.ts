@@ -13,6 +13,7 @@ import type { CliContext } from "../src/context.js";
 import { buildContext } from "../src/context.js";
 import { createCustody } from "../src/custody/index.js";
 import { createEncryptedFileStore } from "../src/custody/encrypted-file.js";
+import { apiKeyAccount, CustodyError } from "../src/custody/types.js";
 import {
   actionOutcomeToCliError,
   isActionOutcomeOk,
@@ -252,5 +253,57 @@ describe("runVerifyAgent", () => {
     expect(summary.valid).toBe(false);
     expect(lines.some((l) => l.startsWith("  FAIL"))).toBe(true);
     expect(lines[lines.length - 1]).toContain("verify FAILED");
+  });
+});
+
+describe("custody provider api key", () => {
+  function makeCustody(): { custody: ReturnType<typeof createCustody>; store: ReturnType<typeof createEncryptedFileStore> } {
+    const dir = mkdtempSync(join(tmpdir(), "openrep-apikey-"));
+    tmpDirs.push(dir);
+    const credentialsFile = join(dir, "credentials.enc");
+    const store = createEncryptedFileStore(credentialsFile, () => Promise.resolve("apikey-test-pass"));
+    const custody = createCustody(
+      { dbPath: "", signingKey: undefined, ownerKey: undefined, keychainPath: undefined, credentialsFile },
+      { stores: [store], note: () => {} },
+    );
+    return { custody, store };
+  }
+
+  it("stores and resolves a provider api key from the encrypted file", async () => {
+    const { custody } = makeCustody();
+    expect(await custody.resolveApiKey("groq")).toBeNull();
+
+    const key = "gsk_testproviderkey123";
+    await custody.storeApiKey("groq", key);
+
+    const resolution = await custody.resolveApiKey("groq");
+    expect(resolution).not.toBeNull();
+    expect(resolution?.key).toBe(key);
+    expect(resolution?.source).toBe("encrypted-file");
+  });
+
+  it("rejects an empty or oversized key before any store write", async () => {
+    const { custody, store } = makeCustody();
+    await expect(custody.storeApiKey("groq", "   ")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    await expect(custody.storeApiKey("groq", "x".repeat(513))).rejects.toMatchObject({ code: "INVALID_INPUT" });
+    // nothing may have been written by the rejected attempts.
+    expect(await custody.resolveApiKey("groq")).toBeNull();
+    // the store itself holds no account (direct probe, bypasses validation).
+    expect(await store.get("apikey/groq")).toBeNull();
+  });
+
+  it("fails closed on a corrupted stored key instead of surfacing it", async () => {
+    const { custody, store } = makeCustody();
+    // direct write of a shape-invalid secret, simulating a damaged store.
+    await store.set("apikey/groq", "   ");
+    await expect(custody.resolveApiKey("groq")).rejects.toBeInstanceOf(CustodyError);
+    await expect(custody.resolveApiKey("groq")).rejects.toMatchObject({ code: "INVALID_INPUT" });
+  });
+
+  it("refuses traversal-shaped provider names for the account", () => {
+    expect(apiKeyAccount("groq")).toBe("apikey/groq");
+    expect(() => apiKeyAccount("../evil")).toThrow(TypeError);
+    expect(() => apiKeyAccount("")).toThrow(TypeError);
+    expect(() => apiKeyAccount("a/b")).toThrow(TypeError);
   });
 });

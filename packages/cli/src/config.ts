@@ -25,8 +25,15 @@
 // interactive session only (openrep with no subcommand):
 //   OPENREP_AGENT_API_KEY    provider api key for the chat screen. when
 //                            absent the tui still works (dashboard, score,
-//                            verify, revoke) and chat fails closed with a
-//                            clear message instead of guessing a key source.
+//                            verify, revoke) and chat asks the user to save
+//                            one via the custody stores, failing closed with
+//                            a clear message when no key can be obtained.
+//                            precedence at point of use: this env var, then
+//                            the custody keychain/encrypted-file entry
+//                            "apikey/groq" (per-provider entries, see
+//                            custody/types.ts). the env value is never
+//                            persisted and wins over a stored key for the
+//                            invocation, mirroring OPENREP_SIGNING_KEY.
 //   OPENREP_AGENT_BASE_URL   openai-compatible chat-completions endpoint.
 //                            default https://api.groq.com/openai/v1 (groq
 //                            hosts openai/gpt-oss-20b). the sdk never guesses
@@ -65,6 +72,17 @@ export interface AgentProviderConfig {
 const DEFAULT_BASE_URL = "https://api.groq.com/openai/v1";
 const DEFAULT_MODEL = "openai/gpt-oss-20b";
 const DEFAULT_LABEL = "groq";
+
+// provider api key shape: non-empty after trim, no whitespace-only values,
+// and a sane upper bound (512) so a paste-bomb or a misread file cannot be
+// stored. deliberately NOT provider-specific (no "gsk_" prefix check): a
+// later version will store keys for other providers, and the shape rule must
+// hold across them.
+export const MAX_PROVIDER_API_KEY_LENGTH = 512;
+
+export function isProviderApiKey(value: string): boolean {
+  return value.trim().length > 0 && value.length <= MAX_PROVIDER_API_KEY_LENGTH;
+}
 
 export function resolveAgentProvider(env: NodeJS.ProcessEnv): AgentProviderConfig {
   const rawUrl = env["OPENREP_AGENT_BASE_URL"];

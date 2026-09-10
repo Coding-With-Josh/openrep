@@ -23,26 +23,37 @@ export interface ChatProps {
   liveTools: { tool: string; input: unknown }[];
   sending: boolean;
   apiKeyMissing: boolean;
+  keyPromptActive: boolean;
+  keySaving: boolean;
+  onKeySubmit: (key: string) => void;
+  onKeyCancel: () => void;
   onSend: (text: string) => void;
   onBack: () => void;
   onRetry: () => void;
   error: UiError | null;
 }
 
-export function Chat({ agent, previousScore, entries, liveTools, sending, apiKeyMissing, onSend, onBack, onRetry, error }: ChatProps) {
+export function Chat({ agent, previousScore, entries, liveTools, sending, apiKeyMissing, keyPromptActive, keySaving, onKeySubmit, onKeyCancel, onSend, onBack, onRetry, error }: ChatProps) {
   const [draft, setDraft] = useState("");
+  const [keyDraft, setKeyDraft] = useState("");
 
   useInput((_input, key) => {
     // esc always leaves the chat screen, even mid-turn: a running turn is
     // anchored to this agent's state and completing it is safe (attest
-    // dedupes via idempotency key), so navigation is permitted.
+    // dedupes via idempotency key), so navigation is permitted. while the
+    // api-key prompt is open, esc cancels the prompt instead of leaving,
+    // so a half-typed key cannot be dropped by accident.
     if (key.escape) {
-      onBack();
+      if (keyPromptActive) {
+        onKeyCancel();
+      } else {
+        onBack();
+      }
       return;
     }
     // ctrl+r retries the last user message. meaningful only when there is a
     // user turn and nothing is already running.
-    if (key.ctrl && key.return === false && key.escape === false) {
+    if (key.ctrl && key.return === false && key.escape === false && !keyPromptActive && !sending) {
       onRetry();
       return;
     }
@@ -67,9 +78,9 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
         )}
       </Box>
 
-      {apiKeyMissing ? (
+      {apiKeyMissing && !keyPromptActive ? (
         <Box marginTop={1}>
-          <Text color="yellow">no OPENREP_AGENT_API_KEY; chat needs a provider api key</Text>
+          <Text color="yellow">no provider api key; chat will ask for one when you send a message</Text>
         </Box>
       ) : null}
 
@@ -83,18 +94,42 @@ export function Chat({ agent, previousScore, entries, liveTools, sending, apiKey
         {sending ? <RunningPanel tools={liveTools} /> : null}
       </Box>
 
-      <Box marginTop={1}>
-        <PromptInput
-          value={draft}
-          onChange={setDraft}
-          onSubmit={(text) => {
-            setDraft("");
-            onSend(text);
-          }}
-          placeholder="ask the agent to research, fetch, or summarize"
-          focused={!sending}
-        />
-      </Box>
+      {keyPromptActive ? (
+        <Box flexDirection="column" marginTop={1}>
+          <Box>
+            <Text color="yellow">no provider api key on file. paste one to save and send:</Text>
+          </Box>
+          <Box marginTop={1}>
+            <PromptInput
+              value={keyDraft}
+              onChange={setKeyDraft}
+              onSubmit={(key) => {
+                setKeyDraft("");
+                onKeySubmit(key);
+              }}
+              placeholder="groq api key (gsk_...)"
+              focused={!keySaving}
+              secret
+            />
+          </Box>
+          <Box marginTop={1}>
+            <Text dimColor>esc cancel · key is saved to keychain/encrypted store</Text>
+          </Box>
+        </Box>
+      ) : (
+        <Box marginTop={1}>
+          <PromptInput
+            value={draft}
+            onChange={setDraft}
+            onSubmit={(text) => {
+              setDraft("");
+              onSend(text);
+            }}
+            placeholder="ask the agent to research, fetch, or summarize"
+            focused={!sending}
+          />
+        </Box>
+      )}
 
       <Box marginTop={1}>
         <Text dimColor>esc back · ctrl+r retry · ctrl+c quit</Text>

@@ -1,9 +1,10 @@
 // screen 1: the agent dashboard. a numbered list of every stored agent with
 // live score deltas, and the navigation surface for chat/score/revoke.
 //
-// navigation is number keys + single letters (no arrow keys), per the spec.
-// "r" never revokes immediately: it arms a y/n confirmation rendered inline,
-// so the irreversible action always requires an explicit second keystroke.
+// navigation is number keys + single letters + up/down arrows moving the
+// selection cursor. "r" never revokes immediately: it arms a y/n
+// confirmation rendered inline, so the irreversible action always requires
+// an explicit second keystroke.
 
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
@@ -85,6 +86,18 @@ export function Dashboard(props: DashboardProps) {
       return;
     }
 
+    // up/down move the selection cursor through the agent list, clamped at
+    // the ends (no wrap: a wrap makes the order of the list ambiguous when
+    // it is long).
+    if (key.upArrow) {
+      props.onSelected(Math.max(0, selected - 1));
+      return;
+    }
+    if (key.downArrow) {
+      props.onSelected(Math.min(rows.length - 1, selected + 1));
+      return;
+    }
+
     // number keys 1..9 select the row at that position.
     const digit = parseInt(input, 10);
     if (!Number.isNaN(digit) && digit >= 1 && digit <= 9) {
@@ -140,9 +153,9 @@ export function Dashboard(props: DashboardProps) {
           <Text color="yellow">revoke {rows[confirmIndex]?.record.name}? [y]es [n]o</Text>
         </Box>
       ) : (
-        <Box marginTop={1}>
-          <Text dimColor>[n] new agent   [enter] chat   [s] score   [r] revoke   [q] quit</Text>
-        </Box>
+<Box marginTop={1}>
+        <Text dimColor>[n] new agent   [enter] chat   [s] score   [r] revoke   [q] quit   ↑/↓ select</Text>
+      </Box>
       )}
 
       {error !== null ? <ErrorLine error={error} /> : null}
