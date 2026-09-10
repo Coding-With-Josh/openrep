@@ -62,9 +62,24 @@ export async function POST(request: NextRequest): Promise<Response> {
       name = body.name.trim();
     }
 
+    // visibility is a closed set {public, private} enforced at the perimeter:
+    // any other value (including mistyped strings) is rejected before the sdk
+    // runs, so the leaderboard's public read can never receive a row that a
+    // caller smuggled through a laxer spelling. absent => sdk default public.
+    let visibility: "public" | "private" | undefined;
+    if (body.visibility !== undefined) {
+      if (body.visibility !== "public" && body.visibility !== "private") {
+        return jsonResponse(
+          { error: { code: "INVALID_INPUT", message: 'visibility must be "public" or "private"' } },
+          400,
+        );
+      }
+      visibility = body.visibility;
+    }
+
     const context = await createRequestContext();
     try {
-      const result = await createAgent({ storage: context.storage, name });
+      const result = await createAgent({ storage: context.storage, name, visibility });
       if (!result.ok) {
         return errorResponse(result.error);
       }

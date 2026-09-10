@@ -3,6 +3,14 @@
 
 export interface CreateCommandOptions {
   revealKeys?: boolean; // --reveal-keys, opt-in private key printing
+  public?: boolean; // --public: leaderboard-visible from birth
+  private?: boolean; // --private: hidden from the leaderboard
+}
+
+export interface VisibilityCommandOptions {
+  agent: string; // -a/--agent
+  public?: boolean; // --public
+  private?: boolean; // --private
 }
 
 export interface AttestCommandArgs {

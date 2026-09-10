@@ -8,7 +8,7 @@
 // CustodyError exactly as the command files always let them (the commander
 // handers normalize via handleCustodyError; the tui catches and renders).
 
-import { createAgent, attest, canonicalize, revokeAgent, verifyAttestation, verifyManifest, type AgentRecord, type AgentManifest, type Attestation, type OpenRepError, type StorageAdapter, type ToolCall } from "@openrepso/sdk";
+import { createAgent, attest, canonicalize, revokeAgent, setVisibility, verifyAttestation, verifyManifest, type AgentRecord, type AgentManifest, type AgentVisibility, type Attestation, type OpenRepError, type StorageAdapter, type ToolCall } from "@openrepso/sdk";
 import { signAsync } from "@noble/ed25519";
 
 import { SCORE_PAGE_LIMIT } from "@openrepso/sdk";
@@ -52,8 +52,12 @@ function codeError(code: string, message: string): ActionOutcome<never> {
 export async function runCreateAgent(
   ctx: CliContext,
   name: string | undefined,
+  visibility: AgentVisibility = "public",
 ): Promise<ActionOutcome<import("@openrepso/sdk").AgentIdentity>> {
-  const result = await createAgent({ storage: ctx.storage, name });
+  // visibility arrives already narrowed to {public, private} by the command
+  // layer's mutually-exclusive flag parsing; the sdk validates it again as
+  // the last line of defense against any future caller passing raw input.
+  const result = await createAgent({ storage: ctx.storage, name, visibility });
   if (!result.ok) return { kind: "sdk-error", error: result.error };
   await ctx.custody.storeAgentKeys(result.value); // throws CustodyError on total failure
   return { kind: "ok", value: result.value };
@@ -133,6 +137,22 @@ export async function runRevokeAgent(
   const result = await revokeAgent({ agentId: record.publicKey, timestamp, signature }, ctx.storage);
   if (!result.ok) return { kind: "sdk-error", error: result.error };
   return { kind: "ok", value: { alreadyRevoked: record.revokedAt !== null } };
+}
+
+// --- visibility ------------------------------------------------------------
+// changes the agent's leaderboard visibility. this is deliberately NOT an
+// ownership-separated operation in the sdk: the sdk treats it as a dumb
+// storage write, and authorization lives where the surface decides it (the
+// cli owns its local db; the web route gates ownership before calling the
+// sdk). the sdk itself still refuses unknown ids and malformed values.
+export async function runSetVisibility(
+  ctx: CliContext,
+  record: AgentRecord,
+  visibility: AgentVisibility,
+): Promise<ActionOutcome<{ visibility: AgentVisibility }>> {
+  const result = await setVisibility(record.publicKey, visibility, ctx.storage);
+  if (!result.ok) return { kind: "sdk-error", error: result.error };
+  return { kind: "ok", value: { visibility } };
 }
 
 // --- verify ----------------------------------------------------------------

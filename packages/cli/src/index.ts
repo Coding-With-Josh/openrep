@@ -19,6 +19,7 @@ import { resolveCommand } from "./commands/resolve.js";
 import { revokeCommand } from "./commands/revoke.js";
 import { scoreCommand } from "./commands/score.js";
 import { verifyCommand } from "./commands/verify.js";
+import { visibilityCommand } from "./commands/visibility.js";
 
 function buildProgram(ctx: CliContext): Command {
   const program = new Command();
@@ -33,6 +34,7 @@ function buildProgram(ctx: CliContext): Command {
   program.addCommand(resolveCommand(ctx));
   program.addCommand(revokeCommand(ctx));
   program.addCommand(verifyCommand(ctx));
+  program.addCommand(visibilityCommand(ctx));
   // commander reports errors (unknown command, missing required option) by
   // throwing; main maps those to exit codes instead of letting them crash.
   program.exitOverride();

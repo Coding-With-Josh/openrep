@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Loader2, Plus, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Globe, Loader2, Lock, Plus, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import AgentAvatar from '@/components/ui/agent-avatar';
 import { useGuestSession } from '@/lib/session';
@@ -12,6 +12,7 @@ import { invalidateCachePrefix } from '@/lib/client-cache';
 import { generateNameBatch } from "@openrepso/sdk/names";
 
 const NAME_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+type Visibility = 'public' | 'private';
 
 // candidates come from the sdk name module: every reroll draws a fresh
 // shuffled batch with no repeated word or name, so the cycle never offers
@@ -29,6 +30,7 @@ const Page = () => {
   const [candidateIndex, setCandidateIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [visibility, setVisibility] = useState<Visibility>('public');
 
   const handleReroll = () => {
     if (creating) return;
@@ -63,10 +65,12 @@ const Page = () => {
       // the server is the authority on name validity and uniqueness; an empty
       // name means the server auto-generates one. the .agent suffix is a
       // server-side contract, appended here so a typed name actually saves.
+      // visibility is the closed set {public, private}; anything else is
+      // rejected by the api route before the sdk runs.
       const res = await fetch('/api/agents', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(trimmed.length > 0 ? { name: `${trimmed}.agent` } : {}),
+        body: JSON.stringify({ ...(trimmed.length > 0 ? { name: `${trimmed}.agent` } : {}), visibility }),
       });
       const body: AgentManifest | ApiError = await res.json();
       if (!res.ok) {
@@ -107,7 +111,8 @@ const Page = () => {
             create an agent
           </h1>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            name it, or keep the generated one. agents start at score 0.00.
+            name it, or keep the generated one. public agents appear on the
+            leaderboard; private agents are only visible to you.
           </p>
         </header>
 
@@ -147,6 +152,47 @@ const Page = () => {
                   )}
                 >
                   <RefreshCw className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1 p-1 rounded-full bg-neutral-100 ring-1 ring-neutral-200/60 dark:bg-white/5 dark:ring-white/10">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVisibility('public');
+                    setError(null);
+                  }}
+                  disabled={creating}
+                  aria-pressed={visibility === 'public'}
+                  className={cn(
+                    'flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tracking-tight transition-all duration-200',
+                    visibility === 'public'
+                      ? 'bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/10'
+                      : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
+                    creating && 'opacity-60 cursor-not-allowed',
+                  )}
+                >
+                  <Globe className="w-3.5 h-3.5" />
+                  public
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVisibility('private');
+                    setError(null);
+                  }}
+                  disabled={creating}
+                  aria-pressed={visibility === 'private'}
+                  className={cn(
+                    'flex items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium tracking-tight transition-all duration-200',
+                    visibility === 'private'
+                      ? 'bg-white text-neutral-900 shadow-sm ring-1 ring-neutral-200/60 dark:bg-neutral-900 dark:text-neutral-100 dark:ring-white/10'
+                      : 'text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200',
+                    creating && 'opacity-60 cursor-not-allowed',
+                  )}
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  private
                 </button>
               </div>
 

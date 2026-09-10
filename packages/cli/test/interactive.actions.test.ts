@@ -20,6 +20,7 @@ import {
   runAttestNative,
   runCreateAgent,
   runRevokeAgent,
+  runSetVisibility,
   runVerifyAgent,
 } from "../src/commands/actions.js";
 import type { AgentRecord } from "@openrepso/sdk";
@@ -68,6 +69,41 @@ describe("runCreateAgent", () => {
     const outcome = await runCreateAgent(ctx, "dup.agent");
     expect(outcome.kind).toBe("sdk-error");
     if (outcome.kind === "sdk-error") expect(outcome.error.code).toBe("DUPLICATE_NAME");
+  });
+
+  it("defaults the stored record to public and honors an explicit private choice", async () => {
+    const ctx = makeContext();
+    const pub = await runCreateAgent(ctx, "visibility-default.agent");
+    expect(isActionOutcomeOk(pub)).toBe(true);
+    if (!isActionOutcomeOk(pub)) return;
+    expect((await ctx.storage.getAgent(pub.value.publicKey))!.visibility).toBe("public");
+
+    const priv = await runCreateAgent(ctx, "visibility-private.agent", "private");
+    expect(isActionOutcomeOk(priv)).toBe(true);
+    if (!isActionOutcomeOk(priv)) return;
+    expect((await ctx.storage.getAgent(priv.value.publicKey))!.visibility).toBe("private");
+  });
+});
+
+describe("runSetVisibility", () => {
+  it("flips an agent's leaderboard visibility both directions", async () => {
+    const ctx = makeContext();
+    const created = await runCreateAgent(ctx, "visibility-flip.agent");
+    expect(isActionOutcomeOk(created)).toBe(true);
+    if (!isActionOutcomeOk(created)) return;
+    const record = (await ctx.storage.getAgent(created.value.publicKey))!;
+    expect(record.visibility).toBe("public");
+
+    const priv = await runSetVisibility(ctx, record, "private");
+    expect(priv.kind).toBe("ok");
+    if (priv.kind !== "ok") return;
+    expect(priv.value.visibility).toBe("private");
+    expect((await ctx.storage.getAgent(created.value.publicKey))!.visibility).toBe("private");
+
+    const pub = await runSetVisibility(ctx, record, "public");
+    expect(pub.kind).toBe("ok");
+    if (pub.kind !== "ok") return;
+    expect((await ctx.storage.getAgent(created.value.publicKey))!.visibility).toBe("public");
   });
 });
 

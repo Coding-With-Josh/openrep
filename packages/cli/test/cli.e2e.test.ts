@@ -129,6 +129,64 @@ describe("spawned binary", () => {
     expect(revealedOut.ownerPrivateKey).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("create defaults to public, --private hides from the leaderboard, and both flags together fail", async (ctx) => {
+    if (process.platform !== "darwin") ctx.skip(); // security is a macos tool
+    const dir = mkdtempSync(join(tmpdir(), "openrep-e2e-vis-"));
+    contexts.push({ dir, env: cliEnvFor(dir), dispose: () => rmSync(dir, { recursive: true, force: true }) });
+    const keychainPath = join(dir, "test.keychain-db");
+    execFileSync("security", ["create-keychain", "-p", "testpass", keychainPath], { stdio: "ignore" });
+    execFileSync("security", ["unlock-keychain", "-p", "testpass", keychainPath], { stdio: "ignore" });
+    const env = { ...cliEnvFor(dir), OPENREP_KEYCHAIN_PATH: keychainPath };
+
+    const pub = await runCli(["create", "vis-pub.agent"], env);
+    expect(pub.code).toBe(0);
+    const pubOut = JSON.parse(pub.stdout) as { publicKey: string; visibility: string };
+    expect(pubOut.visibility).toBe("public");
+
+    const priv = await runCli(["create", "vis-priv.agent", "--private"], env);
+    expect(priv.code).toBe(0);
+    const privOut = JSON.parse(priv.stdout) as { publicKey: string; visibility: string };
+    expect(privOut.visibility).toBe("private");
+
+    // the flag is persisted on the row, not just echoed back in the json
+    const storage = createSqliteStorage(env.OPENREP_DB_PATH as string);
+    expect((await storage.getAgent(pubOut.publicKey))!.visibility).toBe("public");
+    expect((await storage.getAgent(privOut.publicKey))!.visibility).toBe("private");
+
+    // mutually exclusive flags fail closed instead of last-one-wins
+    const both = await runCli(["create", "vis-both.agent", "--public", "--private"], env);
+    expect(both.code).toBe(1);
+    expect(both.stderr).toContain("INVALID_INPUT");
+  });
+
+  it("visibility shows the current value, flips it with --private/--public, and rejects missing agents", async () => {
+    const c = tempCtx();
+    const { identity, env } = await seedAgentAndAttestation(c.env.OPENREP_DB_PATH as string);
+
+    const show = await runCli(["visibility", "-a", "seeded-agent.agent"], env);
+    expect(show.code).toBe(0);
+    expect(show.stdout.trim()).toBe(`${identity.publicKey} public`);
+
+    const flip = await runCli(["visibility", "-a", "seeded-agent.agent", "--private"], env);
+    expect(flip.code).toBe(0);
+    expect(flip.stdout.trim()).toBe(`${identity.publicKey} private`);
+
+    const storage = createSqliteStorage(c.env.OPENREP_DB_PATH as string);
+    expect((await storage.getAgent(identity.publicKey))!.visibility).toBe("private");
+
+    const back = await runCli(["visibility", "-a", identity.publicKey, "--public"], env);
+    expect(back.code).toBe(0);
+    expect(back.stdout.trim()).toBe(`${identity.publicKey} public`);
+
+    const both = await runCli(["visibility", "-a", "seeded-agent.agent", "--public", "--private"], env);
+    expect(both.code).toBe(1);
+    expect(both.stderr).toContain("INVALID_INPUT");
+
+    const missing = await runCli(["visibility", "-a", "no-such-agent.agent", "--private"], env);
+    expect(missing.code).toBe(1);
+    expect(missing.stderr).toContain("AGENT_NOT_FOUND");
+  });
+
   it("verify exits 0 on healthy data and 1 after the stored row is tampered with", async () => {
     const c = tempCtx();
     const { identity, env } = await seedAgentAndAttestation(c.env.OPENREP_DB_PATH as string);
@@ -203,7 +261,7 @@ describe("spawned binary", () => {
     const help = await runCli(["--help"], c.env);
     expect(help.code).toBe(0);
     expect(help.stdout).toContain("Usage: openrep");
-    for (const cmd of ["create", "attest", "ingest", "score", "resolve", "revoke", "verify"]) {
+    for (const cmd of ["create", "attest", "ingest", "score", "resolve", "revoke", "verify", "visibility"]) {
       expect(help.stdout).toContain(cmd);
     }
 

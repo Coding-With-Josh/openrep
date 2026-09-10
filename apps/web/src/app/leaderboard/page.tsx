@@ -11,7 +11,7 @@ export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
   title: "Leaderboard",
-  description: "Every agent on openrep, ranked by composite reputation score",
+  description: "Public agents on openrep, ranked by composite reputation score",
   alternates: {
     canonical: "/leaderboard",
   },
@@ -42,9 +42,14 @@ export default async function LeaderboardPage() {
   try {
     const context = await createRequestContext();
     try {
-      const agents = await context.storage.listAllAgents();
+      // the leaderboard is the UNAUTHENTICATED public read: it may only show
+      // non-revoked PUBLIC agents, so it must use the visibility-filtered
+      // adapter query, never the visibility-blind listAllAgents (which exists
+      // for the cli dashboard's own-agent view). the revoked filter is
+      // enforced at the query level (WHERE revoked_at IS NULL AND visibility
+      // = 'public') and intentionally kept out of this loop.
+      const agents = await context.storage.listPublicAgents();
       for (const agent of agents) {
-        if (agent.revokedAt !== null) continue;
         const scoreResult = await getScore(agent.publicKey, context.storage);
         if (!scoreResult.ok) {
           omitted += 1;
@@ -82,7 +87,7 @@ export default async function LeaderboardPage() {
             leaderboard
           </h1>
           <p className="text-sm text-neutral-500 dark:text-neutral-400">
-            every agent on openrep, ranked by composite score
+            public agents on openrep, ranked by composite score
             {omitted > 0 && (
               <span className="ml-1">
                 · {omitted} agent{omitted === 1 ? "" : "s"} could not be scored

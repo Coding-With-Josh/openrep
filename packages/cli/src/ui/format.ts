@@ -19,6 +19,13 @@ export function statusIcon(record: AgentRecord): string {
   return record.revokedAt !== null ? "○" : "●";
 }
 
+// [pub] / [priv] badge for the dashboard row: shows the leaderboard
+// visibility at a glance next to the name. a public badge is the default
+// state, so the badge is informational, not a warning.
+export function visibilityBadge(record: AgentRecord): string {
+  return record.visibility === "private" ? "[priv]" : "[pub]";
+}
+
 // 1.40 style fixed two-decimal score.
 export function formatScore(value: number): string {
   return value.toFixed(2);

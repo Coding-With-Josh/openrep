@@ -19,6 +19,7 @@ import {
   tailLines,
   toolCallSummary,
   verifyBadge,
+  visibilityBadge,
 } from "../src/ui/format.js";
 
 describe("shortPubKey", () => {
@@ -44,12 +45,34 @@ describe("statusIcon", () => {
     manifestVersion: 1,
     signature: "s",
     revokedAt: null,
+    visibility: "public" as const,
   };
   it("marks active agents with a filled dot", () => {
     expect(statusIcon(base)).toBe("●");
   });
   it("marks revoked agents with an empty dot", () => {
     expect(statusIcon({ ...base, revokedAt: "2026-02-01T00:00:00.000Z" })).toBe("○");
+  });
+});
+
+describe("visibilityBadge", () => {
+  const base = {
+    name: "x",
+    publicKey: "a".repeat(64),
+    ownerPublicKey: null,
+    memoryPointer: null,
+    permissions: [],
+    createdAt: "2026-01-01T00:00:00.000Z",
+    manifestVersion: 1,
+    signature: "s",
+    revokedAt: null,
+    visibility: "public" as const,
+  };
+  it("shows [pub] for a public agent", () => {
+    expect(visibilityBadge(base)).toBe("[pub]");
+  });
+  it("shows [priv] for a private agent", () => {
+    expect(visibilityBadge({ ...base, visibility: "private" })).toBe("[priv]");
   });
 });
 

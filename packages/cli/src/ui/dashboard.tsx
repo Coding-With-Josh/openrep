@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { Box, Text, useInput } from "ink";
 
-import { agentSecondaryLine, deltaArrow, formatScore, statusIcon } from "./format.js";
+import { agentSecondaryLine, deltaArrow, formatScore, statusIcon, visibilityBadge } from "./format.js";
 import type { UiAgentRow, UiError } from "./types.js";
 import { ErrorLine } from "./splash.js";
 
@@ -129,7 +129,8 @@ export function Dashboard(props: DashboardProps) {
                 <Box>
                   <Text color={isSelected ? "green" : undefined}>
                     {isSelected ? "» " : "  "}
-                    {index + 1} {statusIcon(row.record)} {row.record.name}
+                    {index + 1} {statusIcon(row.record)} {row.record.name}{" "}
+                    <Text dimColor>{visibilityBadge(row.record)}</Text>
                   </Text>
                   {composite !== undefined ? (
                     <Text dimColor>
